@@ -1,9 +1,11 @@
 {
   "/_global-error/page": "app/_global-error/page.js",
   "/_not-found/page": "app/_not-found/page.js",
+  "/activities/page": "app/activities/page.js",
   "/api/ai/assistant/route": "app/api/ai/assistant/route.js",
   "/api/ai/chat/route": "app/api/ai/chat/route.js",
   "/api/ai/parse-task/route": "app/api/ai/parse-task/route.js",
+  "/api/ai/today-focus/route": "app/api/ai/today-focus/route.js",
   "/api/auth/test-login/route": "app/api/auth/test-login/route.js",
   "/api/automations/route": "app/api/automations/route.js",
   "/api/classes/route": "app/api/classes/route.js",

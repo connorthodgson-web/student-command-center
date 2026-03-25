@@ -5,6 +5,8 @@ create table if not exists public.classes (
   user_id uuid not null references auth.users (id) on delete cascade,
   name text not null,
   teacher_name text,
+  teacher_email text,
+  notes text,
   room text,
   color text,
   days text[],

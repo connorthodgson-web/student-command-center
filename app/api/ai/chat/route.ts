@@ -3,7 +3,11 @@ import OpenAI from "openai";
 import { mockClasses, mockTasks, mockReminderPreference } from "../../../../lib/mock-data";
 import { buildCalendarContext } from "../../../../lib/schedule";
 import { buildTodayContext, formatTodayContextForPrompt } from "../../../../lib/assistant-context";
+import { buildProfilePrompt } from "../../../../lib/profile";
 import type { AssistantAction, ReminderPreference, SchoolCalendarEntry, SchoolClass, StudentTask } from "../../../../types";
+import type { StudentProfile } from "../../../../lib/profile";
+import type { Activity } from "../../../../lib/activities";
+import type { LifeConstraint } from "../../../../lib/constraints";
 
 // TODO: In a future sprint, replace mock data with real student profile pulled from Supabase.
 // The system prompt should be built from the authenticated user's actual classes, tasks, and preferences.
@@ -17,6 +21,9 @@ function buildSystemPrompt(
   currentDatetime: string,
   calendarEntries?: SchoolCalendarEntry[],
   effectiveDayType?: "A" | "B" | null,
+  profile?: StudentProfile,
+  activities?: Activity[],
+  constraints?: LifeConstraint[],
 ): string {
   const now = new Date(currentDatetime);
   const readableDate = now.toLocaleDateString("en-US", {
@@ -32,11 +39,32 @@ function buildSystemPrompt(
   const todayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const calendarSection = buildCalendarContext(calendarEntries ?? [], todayDateStr, effectiveDayType ?? null);
 
-  const todayCtx = buildTodayContext(now, classes, tasks, calendarEntries ?? [], effectiveDayType ?? null);
+  const todayCtx = buildTodayContext(now, classes, tasks, calendarEntries ?? [], effectiveDayType ?? null, activities ?? [], constraints ?? []);
   const todayContextSection = formatTodayContextForPrompt(todayCtx);
 
   const classLines = classes
-    .map((c) => `* ${c.name} (id:${c.id}), meets ${c.days.join(", ")}, ${c.startTime} to ${c.endTime}`)
+    .map((c) => {
+      const effectiveDays = c.meetings && c.meetings.length > 0
+        ? c.meetings.map((m) => m.day)
+        : c.days;
+      const labelNote = c.scheduleLabel ? ` [${c.scheduleLabel}-Day rotation]` : "";
+      const teacherNote = c.teacherName ? ` — teacher: ${c.teacherName}` : "";
+      const emailNote = c.teacherEmail ? ` <${c.teacherEmail}>` : "";
+      const roomNote = c.room ? `, room: ${c.room}` : "";
+
+      if (c.meetings && c.meetings.length > 0) {
+        const meetingLines = c.meetings
+          .map((m) => `    ${m.day}: ${m.startTime}–${m.endTime}`)
+          .join("\n");
+        return `* ${c.name} (id:${c.id})${labelNote}${teacherNote}${emailNote}${roomNote}, per-day times:\n${meetingLines}`;
+      }
+
+      const daysStr = effectiveDays.length > 0
+        ? effectiveDays.join(", ")
+        : "(no fixed days — pure A/B rotation)";
+      const timeStr = c.startTime && c.endTime ? `, ${c.startTime}–${c.endTime}` : "";
+      return `* ${c.name} (id:${c.id})${labelNote}, meets ${daysStr}${timeStr}${teacherNote}${emailNote}${roomNote}`;
+    })
     .join("\n");
 
   const taskLines = tasks
@@ -73,10 +101,12 @@ function buildSystemPrompt(
     ? `* Due soon reminders: enabled, ${reminderPreferences.dueSoonHoursBefore ?? 0} hours before`
     : "* Due soon reminders: disabled";
 
+  const profileSection = buildProfilePrompt(profile);
+
   return `You are a calm, smart academic assistant built into a student planner app. Today is ${readableDate} at ${readableTime}.
 
 You are given structured context about the student's current day, schedule, and upcoming tasks. Use it to give specific, practical, and grounded answers. Prefer referencing real items from the context instead of giving generic advice.
-
+${profileSection ? `\n${profileSection}\n` : ""}
 ${todayContextSection}
 
 School calendar context:
@@ -102,6 +132,10 @@ ${dueSoonLine}
 5. **Answer first, then expand** — start with a short direct answer (1–2 sentences), then optionally add a few bullets.
 6. **Keep responses calm and concise** — no long paragraphs, no over-explaining.
 7. **For "what should I work on" questions** — recommend one clear starting task, then optionally include 1–2 secondary suggestions.
+8. **For schedule questions ("what do I have today/tomorrow/on A day/on B day")** — list classes in time order with name and time. Include room if known. Keep it compact.
+9. **For teacher questions ("who teaches X", "what's my X teacher's name")** — answer directly from the class list. If teacher info isn't available, say so in one sentence.
+10. **For email drafting help** — if the student asks to draft an email to a teacher, use the teacher name from the class list. Note: you cannot send emails, only draft them.
+11. **If context is missing** — say so honestly in one sentence. Never invent schedule details, teacher names, or due dates.
 
 ### Formatting Rules
 
@@ -113,9 +147,12 @@ ${dueSoonLine}
 
 Examples of good response patterns:
 - "Do I have school Friday?" → one sentence, no heading
-- "What do I have today?" → short intro, then 2–3 bullets max
+- "What do I have today?" → short intro, then class list in time order
+- "What does my A day look like?" → list A-day classes in time order with times and rooms
 - "What should I work on tonight?" → name one task directly, then 1–2 secondary options if relevant
 - "What do I have this week?" → grouped by day using ### headings, bullets under each
+- "Who teaches my English class?" → direct answer from class list, one sentence
+- "Help me email my history teacher" → draft a polite email using teacher name from context
 
 ### Creating Automations & Reminders
 
@@ -157,6 +194,9 @@ export async function POST(request: Request) {
     currentDatetime?: string;
     calendarEntries?: SchoolCalendarEntry[];
     effectiveDayType?: "A" | "B" | null;
+    profile?: StudentProfile;
+    activities?: Activity[];
+    constraints?: LifeConstraint[];
   };
 
   if (!body.message) {
@@ -170,9 +210,12 @@ export async function POST(request: Request) {
   const currentDatetime = body.currentDatetime ?? new Date().toISOString();
   const calendarEntries = body.calendarEntries;
   const effectiveDayType = body.effectiveDayType;
+  const profile = body.profile;
+  const activities = body.activities ?? [];
+  const constraints = body.constraints ?? [];
 
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: "system", content: buildSystemPrompt(tasks, classes, reminderPreferences, currentDatetime, calendarEntries, effectiveDayType) },
+    { role: "system", content: buildSystemPrompt(tasks, classes, reminderPreferences, currentDatetime, calendarEntries, effectiveDayType, profile, activities, constraints) },
     ...history
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),

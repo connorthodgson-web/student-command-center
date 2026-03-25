@@ -1,24 +1,84 @@
-/* UI redesign pass */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Student Command Center — global styles */
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── Light mode (default) ─────────────────────────────────────────── */
 :root {
   color-scheme: light;
+
+  /* Simple hex vars (no opacity modifier needed) */
+  --bg:               #f5f7f5;
+  --fg:               #111b17;
+  --muted:            #627069;
+  --card:             #ffffff;
+  --border:           #dce4de;
+  --surface:          #eef2f0;
+  --hero:             #0f2117;
+  --hero-mid:         #163020;
+  --hero-light:       #1d3e28;
+  --sidebar:          #0f2117;
+  --sidebar-active:   #1d3e28;
+  --sidebar-hover:    #c8e8d0;
+
+  /* RGB triplets — used by Tailwind's opacity modifier syntax */
+  /* rgb(var(--sidebar-accent) / 0.2) etc. */
+  --sidebar-accent:   74 222 128;    /* #4ade80 — overridden by accent theme */
+  --sidebar-text:     122 171 138;   /* #7aab8a */
+  --accent-green:     212 237 217;   /* #d4edd9 */
+  --accent-green-fg:  #1a4028;
+  --accent-blue:      212 230 247;   /* #d4e6f7 */
+  --accent-blue-fg:   #173354;
+  --accent-amber:     253 239 211;   /* #fdefd3 */
+  --accent-amber-fg:  #4a3000;
+  --accent-rose:      253 224 224;   /* #fde0e0 */
+  --accent-rose-fg:   #4a1010;
+  --accent-purple:    235 224 253;   /* #ebe0fd */
+  --accent-purple-fg: #2e1054;
 }
 
+/* ── Dark mode ────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Main surface colors go dark — keep forest green character */
+  --bg:     #111815;
+  --fg:     #dce8df;
+  --muted:  #7a9480;
+  --card:   #192a1e;
+  --border: #25392a;
+  --surface: #1e3024;
+
+  /* Sidebar stays the same (it's already dark green — part of the brand) */
+
+  /* Accent token dark variants — darker bg, lighter fg text */
+  --accent-green:     30 62 36;    /* darkened green */
+  --accent-green-fg:  #7dd98a;     /* lighter green text */
+  --accent-blue:      20 42 68;
+  --accent-blue-fg:   #7ab8e8;
+  --accent-amber:     58 40 10;
+  --accent-amber-fg:  #e8b854;
+  --accent-rose:      58 20 20;
+  --accent-rose-fg:   #e88080;
+  --accent-purple:    42 26 72;
+  --accent-purple-fg: #c090f0;
+}
+
+/* ── Base styles ──────────────────────────────────────────────────── */
 html {
-  background: #f5f7f5;
+  background: var(--bg);
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: #f5f7f5;
-  color: #111b17;
-  font-family: 'Inter', 'system-ui', sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a {
@@ -30,13 +90,13 @@ a {
   box-sizing: border-box;
 }
 
-/* Text selection */
+/* Text selection — uses accent color */
 ::selection {
-  background: #d4edd9;
-  color: #1a4028;
+  background: rgb(var(--accent-green) / 0.6);
+  color: var(--accent-green-fg);
 }
 
-/* Thin scrollbar for the chat message list (.chat-scroll) */
+/* ── Scrollbar — chat message list ───────────────────────────────── */
 .chat-scroll::-webkit-scrollbar {
   width: 4px;
 }
@@ -44,9 +104,20 @@ a {
   background: transparent;
 }
 .chat-scroll::-webkit-scrollbar-thumb {
-  background: #dce4de;
+  background: var(--border);
   border-radius: 9999px;
 }
 .chat-scroll::-webkit-scrollbar-thumb:hover {
-  background: #b8c8be;
+  background: var(--muted);
+  opacity: 0.4;
+}
+
+/* ── Smooth transitions for theme switch ─────────────────────────── */
+html {
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Prevent transition flash on initial load */
+html.no-transition * {
+  transition: none !important;
 }

@@ -1,4 +1,3 @@
-// UI redesign pass
 import OpenAI from "openai";
 import type { ChatMessage, ReminderPreference, SchoolCalendarEntry, SchoolClass, StudentTask } from "../types";
 import { buildCalendarContext, getEffectiveDays } from "./schedule";
@@ -91,12 +90,13 @@ Each class object must have:
 - startTime: "HH:MM" 24-hour format (e.g. "08:00", "13:30"). Use "08:00" if not specified.
 - endTime: "HH:MM" 24-hour format. Use "09:00" if not specified.
 - teacherName: string or null
+- teacherEmail: string or null (only if clearly stated as an email address)
 - room: string or null
 
 Valid weekday values: "monday" "tuesday" "wednesday" "thursday" "friday" "saturday" "sunday"
 
 Return format — an object with a single "classes" key:
-{ "classes": [ { "name": "...", "scheduleLabel": null, "days": [...], "startTime": "HH:MM", "endTime": "HH:MM", "teacherName": null, "room": null } ] }`;
+{ "classes": [ { "name": "...", "scheduleLabel": null, "days": [...], "startTime": "HH:MM", "endTime": "HH:MM", "teacherName": null, "teacherEmail": null, "room": null } ] }`;
 
   try {
     const response = await client.chat.completions.create({
@@ -120,6 +120,7 @@ Return format — an object with a single "classes" key:
       startTime: typeof c.startTime === "string" ? c.startTime : "08:00",
       endTime: typeof c.endTime === "string" ? c.endTime : "09:00",
       teacherName: typeof c.teacherName === "string" ? c.teacherName : undefined,
+      teacherEmail: typeof c.teacherEmail === "string" ? c.teacherEmail : undefined,
       room: typeof c.room === "string" ? c.room : undefined,
       color: CLASS_COLORS[i % CLASS_COLORS.length],
     }));
@@ -162,16 +163,19 @@ export async function answerWorkloadQuestion(
     .map((c) => {
       const effectiveDays = getEffectiveDays(c);
       const labelNote = c.scheduleLabel ? ` [${c.scheduleLabel}-Day rotation]` : "";
+      const teacherNote = c.teacherName ? ` — teacher: ${c.teacherName}` : "";
+      const emailNote = c.teacherEmail ? ` <${c.teacherEmail}>` : "";
+      const roomNote = c.room ? `, room: ${c.room}` : "";
       if (c.meetings && c.meetings.length > 0) {
         const meetingLines = c.meetings
           .map((m) => `    ${m.day}: ${m.startTime}–${m.endTime}`)
           .join("\n");
-        return `* ${c.name}${c.teacherName ? ` (${c.teacherName})` : ""}${labelNote}, per-day schedule:\n${meetingLines}${c.room ? `, ${c.room}` : ""}`;
+        return `* ${c.name}${labelNote}${teacherNote}${emailNote}${roomNote}, per-day schedule:\n${meetingLines}`;
       }
       const timeStr =
         c.startTime && c.endTime ? `, ${c.startTime}–${c.endTime}` : "";
       const daysStr = effectiveDays.length > 0 ? ` meets ${effectiveDays.join(", ")}` : " (pure A/B rotation, no fixed days)";
-      return `* ${c.name}${c.teacherName ? ` (${c.teacherName})` : ""}${labelNote}${daysStr}${timeStr}${c.room ? `, ${c.room}` : ""}`;
+      return `* ${c.name}${labelNote}${daysStr}${timeStr}${teacherNote}${emailNote}${roomNote}`;
     })
     .join("\n");
 
@@ -222,23 +226,19 @@ ${dailySummaryLine}
 ${tonightSummaryLine}
 ${dueSoonLine}
 
-## Response style rules (follow these carefully):
+## How to respond:
 
-1. **Start with a short direct answer or summary** — one or two sentences max. Get to the point immediately.
-2. **Then add organized details** if the question warrants it — use short bullet lines starting with "- " for lists.
-3. **Bold important things** using **markdown bold** — class names, due dates, day labels, key deadlines.
-4. **Adapt length to the question** — simple yes/no questions get a short focused reply; weekly overview questions get a clean grouped summary.
-5. **Use section headings sparingly** — only for grouped, multi-day, or multi-part answers. Use "### Monday" or "### This Week" style headings to separate day groups or major sections. Do NOT use headings for simple one-part answers.
-6. **Use 1–3 relevant emojis** per response, placed naturally (not at the start of every line). Good use: a calendar emoji near a date, a checkmark near completed items. Do not overuse.
-7. **Sound student-friendly and supportive** — not robotic, not generic productivity-speak. Be calm and direct.
-8. **Never invent information** not in the context above. If unsure, say so briefly.
-9. **Keep bullet points short** — one idea per line, no long run-on bullets.
+Start with a short direct answer — one or two sentences, no preamble. Then add 2–4 concise bullet points only if the question warrants detail. For simple questions (yes/no, single-fact), skip bullets entirely. For planning or overview questions, group by day using ### headings (e.g. ### Monday). At the end of relevant answers, offer one short follow-up action like "I can break that into smaller steps" or "Want me to help plan tonight?" — but only when it's genuinely useful, not on every reply.
 
-Examples of good response patterns:
-- "Do I have school Friday?" → one sentence answer, no heading needed
-- "What do I have this week?" → brief intro line, then ### Monday / ### Tuesday etc. with bullets under each
-- "What should I work on tonight?" → maybe a ### Tonight heading if listing multiple things, otherwise just bullets
-- "Do I have any tests soon?" → direct answer, then list only if there are items to list`;
+Keep answers concise. Bold class names, due dates, and key deadlines. Use section headings only for multi-day or multi-part answers. Place 1–2 emojis naturally where they add clarity (dates, completed items) — not on every line. Sound direct and student-friendly, not robotic or motivational.
+
+Never invent information not found above. For teacher questions, answer from the class list — if no teacher is recorded, say so in one sentence. For email drafting, use teacher info from context and note you can draft but not send.
+
+Examples:
+- "Do I have school Friday?" → one sentence, no bullets
+- "What do I have this week?" → brief intro, then ### Monday / ### Tuesday with bullets under each
+- "What should I work on tonight?" → direct answer with bullets if multiple items, optional follow-up offer
+- "Who teaches AP Bio?" → one sentence from class list`;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",

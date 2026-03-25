@@ -1,5 +1,9 @@
 import type { SchoolCalendarEntry, SchoolClass, StudentTask, Weekday } from "../types";
 import { getClassesForToday, getClassTimeForDay, isNoSchoolDay } from "./schedule";
+import type { Activity } from "./activities";
+import { getTodayActivities, formatActivityTime } from "./activities";
+import type { LifeConstraint } from "./constraints";
+import { getRelevantConstraints } from "./constraints";
 
 function toDateStr(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -14,6 +18,10 @@ export interface TodayContextClass {
   name: string;
   startTime: string;
   endTime: string;
+  /** Room number or location, if set on the class */
+  room?: string;
+  /** Teacher name, if set on the class */
+  teacherName?: string;
 }
 
 export interface TodayContextTask {
@@ -32,6 +40,8 @@ export interface TodayContext {
   tasksDueTomorrow: TodayContextTask[];
   tasksDueThisWeek: TodayContextTask[];
   overdueTasks: TodayContextTask[];
+  todayActivities: Activity[];
+  relevantConstraints: LifeConstraint[];
 }
 
 export function buildTodayContext(
@@ -40,6 +50,8 @@ export function buildTodayContext(
   tasks: StudentTask[],
   calendarEntries: SchoolCalendarEntry[],
   effectiveDayType: "A" | "B" | null,
+  activities: Activity[] = [],
+  constraints: LifeConstraint[] = [],
 ): TodayContext {
   const todayStr = toDateStr(now);
   const weekday = getWeekday(now);
@@ -54,6 +66,8 @@ export function buildTodayContext(
           name: c.name,
           startTime: times?.startTime ?? c.startTime,
           endTime: times?.endTime ?? c.endTime,
+          room: c.room,
+          teacherName: c.teacherName,
         };
       });
 
@@ -105,53 +119,82 @@ export function buildTodayContext(
     tasksDueTomorrow,
     tasksDueThisWeek,
     overdueTasks,
+    todayActivities: getTodayActivities(activities),
+    relevantConstraints: getRelevantConstraints(constraints),
   };
+}
+
+function timeToMinutes(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + (m ?? 0);
 }
 
 export function formatTodayContextForPrompt(ctx: TodayContext): string {
   const lines: string[] = [];
 
-  lines.push(`## Structured Today Context`);
-  lines.push(`Date: ${ctx.dayOfWeek}, ${ctx.date}`);
-  if (ctx.dayType) lines.push(`Day type: ${ctx.dayType}-Day`);
-  if (ctx.isNoSchool) lines.push(`Note: No school today.`);
+  lines.push(`## Today's context`);
+  const dayLabel = ctx.dayType ? ` (${ctx.dayType}-Day)` : "";
+  lines.push(`${ctx.dayOfWeek}, ${ctx.date}${dayLabel}${ctx.isNoSchool ? " — no school" : ""}`);
   lines.push(``);
 
-  if (ctx.isNoSchool || ctx.todayClasses.length === 0) {
-    lines.push(`Classes today: none`);
-  } else {
-    lines.push(`Classes today:`);
+  if (!ctx.isNoSchool && ctx.todayClasses.length > 0) {
+    // Determine current and next class based on current wall-clock time
+    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    let currentClass: TodayContextClass | null = null;
+    let nextClass: TodayContextClass | null = null;
+
     for (const c of ctx.todayClasses) {
-      lines.push(`  - ${c.name}: ${c.startTime}–${c.endTime}`);
+      const start = timeToMinutes(c.startTime);
+      const end = timeToMinutes(c.endTime);
+      if (nowMinutes >= start && nowMinutes < end) {
+        currentClass = c;
+      } else if (nowMinutes < start && !nextClass) {
+        nextClass = c;
+      }
     }
+
+    if (currentClass) {
+      lines.push(`Current class: ${currentClass.name} (until ${currentClass.endTime})`);
+    }
+    if (nextClass) {
+      lines.push(`Next class: ${nextClass.name} at ${nextClass.startTime}`);
+    }
+
+    lines.push(`Schedule today:`);
+    for (const c of ctx.todayClasses) {
+      const details: string[] = [];
+      if (c.room) details.push(`room ${c.room}`);
+      if (c.teacherName) details.push(c.teacherName);
+      const detailStr = details.length > 0 ? ` (${details.join(", ")})` : "";
+      lines.push(`  - ${c.name}: ${c.startTime}–${c.endTime}${detailStr}`);
+    }
+  } else {
+    lines.push(`Classes today: none`);
   }
   lines.push(``);
 
   if (ctx.overdueTasks.length > 0) {
-    lines.push(`Overdue tasks:`);
-    for (const t of ctx.overdueTasks) {
-      const due = t.dueAt
-        ? new Date(t.dueAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
-        : "";
+    const overdueSummary = ctx.overdueTasks.map((t) => {
       const cls = t.className ? ` [${t.className}]` : "";
-      lines.push(`  - ${t.title}${cls}${due ? `, was due ${due}` : ""}`);
-    }
+      return `${t.title}${cls}`;
+    }).join(", ");
+    lines.push(`Overdue (${ctx.overdueTasks.length}): ${overdueSummary}`);
     lines.push(``);
   }
 
   if (ctx.tasksDueToday.length > 0) {
-    lines.push(`Tasks due today:`);
+    lines.push(`Due today:`);
     for (const t of ctx.tasksDueToday) {
       const cls = t.className ? ` [${t.className}]` : "";
       lines.push(`  - ${t.title}${cls}`);
     }
   } else {
-    lines.push(`Tasks due today: none`);
+    lines.push(`Due today: nothing`);
   }
   lines.push(``);
 
   if (ctx.tasksDueTomorrow.length > 0) {
-    lines.push(`Tasks due tomorrow:`);
+    lines.push(`Due tomorrow:`);
     for (const t of ctx.tasksDueTomorrow) {
       const cls = t.className ? ` [${t.className}]` : "";
       lines.push(`  - ${t.title}${cls}`);
@@ -160,13 +203,33 @@ export function formatTodayContextForPrompt(ctx: TodayContext): string {
   }
 
   if (ctx.tasksDueThisWeek.length > 0) {
-    lines.push(`Tasks due this week (next 2–7 days):`);
+    lines.push(`Coming up this week:`);
     for (const t of ctx.tasksDueThisWeek) {
       const due = t.dueAt
         ? new Date(t.dueAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
         : "";
       const cls = t.className ? ` [${t.className}]` : "";
-      lines.push(`  - ${t.title}${cls}${due ? `, due ${due}` : ""}`);
+      lines.push(`  - ${t.title}${cls}${due ? ` — ${due}` : ""}`);
+    }
+  }
+
+  if (ctx.todayActivities.length > 0) {
+    lines.push(``);
+    lines.push(`Outside activities today:`);
+    for (const a of ctx.todayActivities) {
+      const loc = a.location ? ` @ ${a.location}` : "";
+      lines.push(`  - ${a.title}: ${formatActivityTime(a.startTime, a.endTime)}${loc}`);
+    }
+  }
+
+  if (ctx.relevantConstraints.length > 0) {
+    lines.push(``);
+    lines.push(`Life constraints / commitments:`);
+    for (const c of ctx.relevantConstraints) {
+      const dateLabel = c.date
+        ? ` (${new Date(c.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })})`
+        : "";
+      lines.push(`  - ${c.text}${dateLabel}`);
     }
   }
 

@@ -25,6 +25,7 @@ import {
 } from "../../lib/tasks";
 import type { TaskDisplayBuckets } from "../../lib/tasks";
 import type { SchoolDayCategory } from "../../types";
+import { TodayFocusCard } from "../../components/TodayFocusCard";
 
 const BUCKET_LABELS: Record<keyof TaskDisplayBuckets, string> = {
   overdue: "Overdue",
@@ -121,37 +122,47 @@ export default function DashboardPage() {
   return (
     <main className="flex min-h-screen flex-col">
       {/* ── Dark hero: greeting + assistant input ─────────────────── */}
-      <div className="bg-hero px-8 py-10 md:py-12">
-        <div className="mx-auto max-w-6xl">
-          {/* Date + greeting */}
-          <p className="text-[13px] font-medium text-sidebar-text">
-            {greeting}
-            <span className="ml-2 text-white/30">·</span>
-            <span className="ml-2">{formatTodayLong()}</span>
-          </p>
-          <h1 className="mt-1.5 text-[2.25rem] font-bold tracking-tight text-white leading-tight">
+      <div className="relative bg-hero px-8 py-10 md:py-14">
+        {/* Subtle radial glow for depth */}
+        <div
+          className="pointer-events-none absolute inset-0 opacity-30"
+          style={{
+            background:
+              "radial-gradient(ellipse 70% 60% at 50% 0%, rgba(74,222,128,0.08) 0%, transparent 70%)",
+          }}
+        />
+
+        <div className="relative mx-auto max-w-6xl">
+          {/* Date + greeting row */}
+          <div className="flex items-center gap-2 text-[13px]">
+            <span className="font-medium text-sidebar-text">{greeting}</span>
+            <span className="text-white/20">·</span>
+            <span className="text-white/40">{formatTodayLong()}</span>
+          </div>
+
+          <h1 className="mt-2 text-[2.4rem] font-bold tracking-tight text-white leading-[1.15]">
             What&apos;s on your mind?
           </h1>
 
           {/* Status chips */}
           <div className="mt-4 flex flex-wrap gap-2">
             {tasksWithDates > 0 && (
-              <span className="inline-flex items-center rounded-full border border-amber-400/25 bg-amber-400/15 px-3 py-1 text-xs font-medium text-amber-300">
+              <span className="inline-flex items-center rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-300/90">
                 {tasksWithDates} task{tasksWithDates !== 1 ? "s" : ""} with due dates
               </span>
             )}
             {todayClasses.length > 0 && (
-              <span className="inline-flex items-center rounded-full border border-blue-400/25 bg-blue-400/15 px-3 py-1 text-xs font-medium text-blue-300">
+              <span className="inline-flex items-center rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-xs font-medium text-blue-300/90">
                 {todayClasses.length} {todayClasses.length === 1 ? "class" : "classes"} today
               </span>
             )}
             {overdueCount > 0 && (
-              <span className="inline-flex items-center rounded-full border border-red-400/25 bg-red-400/15 px-3 py-1 text-xs font-medium text-red-300">
+              <span className="inline-flex items-center rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1 text-xs font-medium text-red-300/90">
                 {overdueCount} overdue
               </span>
             )}
             {incompleteTasks.length === 0 && (
-              <span className="inline-flex items-center rounded-full border border-sidebar-accent/25 bg-sidebar-accent/10 px-3 py-1 text-xs font-medium text-sidebar-accent">
+              <span className="inline-flex items-center rounded-full border border-sidebar-accent/20 bg-sidebar-accent/8 px-3 py-1 text-xs font-medium text-sidebar-accent">
                 All clear — no open tasks
               </span>
             )}
@@ -252,24 +263,28 @@ export default function DashboardPage() {
         {/* Today's schedule strip */}
         {!noSchoolToday && todayClasses.length > 0 && (
           <section>
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted">
+            <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
               Today&apos;s Schedule
             </h2>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-2.5">
               {todayClasses.map((cls) => {
                 const time = getClassTimeForDay(cls, todayWeekday);
+                const dotColor = cls.color ?? "#d4edd9";
                 return (
                   <div
                     key={cls.id}
-                    className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm"
+                    className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-card transition-shadow hover:shadow-card-md"
                   >
+                    {/* Color dot with slight shadow for depth */}
                     <div
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: cls.color ?? "#d4edd9" }}
+                      className="h-2.5 w-2.5 shrink-0 rounded-full shadow-sm"
+                      style={{ backgroundColor: dotColor }}
                     />
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-semibold text-foreground">{cls.name}</p>
+                        <p className="text-sm font-semibold text-foreground leading-tight">
+                          {cls.name}
+                        </p>
                         {cls.scheduleLabel && (
                           <span
                             className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
@@ -283,9 +298,14 @@ export default function DashboardPage() {
                         )}
                       </div>
                       {time && (
-                        <p className="text-xs text-muted">
+                        <p className="mt-0.5 text-xs text-muted">
                           {formatTimeRange(time.startTime, time.endTime)}
-                          {cls.room ? ` · ${cls.room}` : ""}
+                          {cls.room ? (
+                            <>
+                              <span className="mx-1 opacity-40">·</span>
+                              {cls.room}
+                            </>
+                          ) : null}
                         </p>
                       )}
                     </div>
@@ -328,6 +348,9 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Today Focus */}
+        <TodayFocusCard />
+
         {/* Up Next + Workload */}
         <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
           <NextTaskCard
@@ -335,7 +358,7 @@ export default function DashboardPage() {
             schoolClass={nextTask ? classes.find((c) => c.id === nextTask.classId) : undefined}
           />
 
-          <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+          <section className="rounded-2xl border border-border bg-card p-6 shadow-card">
             <h2 className="text-base font-semibold text-foreground">Workload</h2>
             <div className="mt-4 space-y-3">
               {nonEmptyBuckets.length === 0 ? (

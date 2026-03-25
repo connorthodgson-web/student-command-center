@@ -1,8 +1,7 @@
-// UI redesign pass
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { mockChatMessages } from "../lib/mock-data";
+import Link from "next/link";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTaskStore } from "../lib/task-store";
 import { useReminderStore } from "../lib/reminder-store";
 import { useClasses } from "../lib/stores/classStore";
@@ -10,12 +9,86 @@ import { useCalendar } from "../lib/stores/calendarStore";
 import { useScheduleConfig } from "../lib/stores/scheduleConfig";
 import { useAutomations } from "../lib/stores/automationStore";
 import { getAbOverrideForDate, getTodayDateString } from "../lib/schedule";
+import { loadProfile } from "../lib/profile";
+import { loadActivities } from "../lib/activities";
+import { loadConstraints } from "../lib/constraints";
 import type { AssistantAction, ChatMessage } from "../types";
 
+// ── Voice input hook ──────────────────────────────────────────────────────────
+// Uses browser Web Speech API — lightweight, no external dependencies.
+// Resolves to undefined when the browser doesn't support it.
+
+type VoiceState = "idle" | "listening" | "unsupported";
+
+// Minimal types for the Web Speech API (not in standard TS lib)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySpeechRecognition = any;
+
+function useSpeechInput(onTranscript: (text: string) => void) {
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const recognitionRef = useRef<AnySpeechRecognition | null>(null);
+
+  const isSupported =
+    typeof window !== "undefined" &&
+    // @ts-ignore
+    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+
+  const startListening = useCallback(() => {
+    if (!isSupported) {
+      setVoiceState("unsupported");
+      return;
+    }
+
+    // @ts-ignore — webkit prefix fallback
+    const SpeechRecognitionImpl = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    const recognition: AnySpeechRecognition = new SpeechRecognitionImpl();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+
+    recognition.onstart = () => setVoiceState("listening");
+    recognition.onend = () => setVoiceState("idle");
+    recognition.onerror = () => setVoiceState("idle");
+
+    recognition.onresult = (event: AnySpeechRecognition) => {
+      const transcript = event.results?.[0]?.[0]?.transcript ?? "";
+      if (transcript.trim()) onTranscript(transcript.trim());
+    };
+
+    recognition.start();
+  }, [isSupported, onTranscript]);
+
+  const stopListening = useCallback(() => {
+    recognitionRef.current?.stop();
+    setVoiceState("idle");
+  }, []);
+
+  return { voiceState, isSupported, startListening, stopListening };
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+const SUGGESTED_PROMPTS = [
+  "What should I focus on today?",
+  "What do I have coming up?",
+  "Help me plan tonight",
+];
+
+const INITIAL_GREETING: ChatMessage = {
+  id: "chat-greeting",
+  role: "assistant",
+  content: "Hi! I can help you check what's due, look at your schedule, or think through your week. What's on your mind?",
+  createdAt: new Date().toISOString(),
+};
+
 export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
-  const [messages, setMessages] = useState<ChatMessage[]>(mockChatMessages);
+  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_GREETING]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const profile = loadProfile();
+  const activities = loadActivities();
+  const constraints = loadConstraints();
   const { tasks } = useTaskStore();
   const { preferences: reminderPreferences } = useReminderStore();
   const { classes } = useClasses();
@@ -23,13 +96,21 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const { todayDayType } = useScheduleConfig();
   const { addAutomation } = useAutomations();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Pre-fill input from ?q= deep-link (e.g. from Automations page example chips)
+  const { voiceState, isSupported, startListening, stopListening } = useSpeechInput(
+    (transcript) => {
+      setInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
+      textareaRef.current?.focus();
+    }
+  );
+
+  // Pre-fill from ?q= deep-link
   useEffect(() => {
     if (initialQuery) setInput(initialQuery);
   }, [initialQuery]);
 
-  // Auto-scroll to the newest message whenever messages change
+  // Auto-scroll to newest message
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -79,10 +160,17 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
           currentDatetime: new Date().toISOString(),
           calendarEntries,
           effectiveDayType,
+          profile,
+          activities,
+          constraints,
         }),
       });
 
-      const json = (await response.json()) as { data?: ChatMessage; action?: AssistantAction; error?: string };
+      const json = (await response.json()) as {
+        data?: ChatMessage;
+        action?: AssistantAction;
+        error?: string;
+      };
 
       const assistantMessage: ChatMessage = json.data ?? {
         id: `assistant-${Date.now()}`,
@@ -91,7 +179,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
         createdAt: new Date().toISOString(),
       };
 
-      // Handle automation creation action — validate before saving to prevent corrupt state
+      // Handle automation creation action
       if (json.action?.type === "create_automation") {
         const auto = json.action.automation;
         const isValid =
@@ -112,7 +200,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
               assistantMessage.content.trimEnd() +
               "\n\n✓ Saved to your [Automations](/automations).";
           } catch {
-            // Don't crash the chat if saving fails — message still renders
+            // Don't crash chat if save fails
           }
         }
       }
@@ -140,10 +228,17 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
     }
   };
 
+  const isListening = voiceState === "listening";
+  const hasUserMessages = messages.some((m) => m.role === "user");
+
+  const handleSuggestedPrompt = (prompt: string) => {
+    setInput(prompt);
+    textareaRef.current?.focus();
+  };
+
   return (
-    // flex-col + h-full so messages scroll and input stays pinned to the bottom
     <div className="flex flex-1 flex-col overflow-hidden py-4">
-      {/* ── Message list ────────────────────────────────────── */}
+      {/* ── Message list ─────────────────────────────────────────── */}
       <div
         ref={scrollRef}
         className="chat-scroll flex-1 space-y-5 overflow-y-auto pb-2 pr-1"
@@ -151,47 +246,119 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
         ))}
+
+        {/* Suggested prompts — shown only before first user message */}
+        {!hasUserMessages && (
+          <div className="flex flex-wrap gap-2 pt-1 pl-10">
+            {SUGGESTED_PROMPTS.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => handleSuggestedPrompt(prompt)}
+                className="rounded-xl border border-border bg-card px-3 py-1.5 text-xs text-muted transition hover:border-accent-green-foreground/40 hover:bg-surface hover:text-foreground"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* ── Input bar ────────────────────────────────────────── */}
+      {/* ── Input area ───────────────────────────────────────────── */}
       <div className="shrink-0 border-t border-border pt-4">
-        <form onSubmit={handleSend} className="flex items-end gap-3">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about your workload, what's due, or anything school-related…"
-            rows={2}
-            disabled={isLoading}
-            className="flex-1 resize-none rounded-2xl border border-border bg-card px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40 disabled:opacity-50"
-          />
-          <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="shrink-0 rounded-2xl bg-hero px-5 py-3 text-sm font-medium text-white transition hover:bg-hero-mid disabled:opacity-40"
-          >
-            {isLoading ? (
-              <span className="flex items-center gap-1">
-                <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-white/70 [animation-delay:0ms]" />
-                <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-white/70 [animation-delay:150ms]" />
-                <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-white/70 [animation-delay:300ms]" />
-              </span>
-            ) : (
-              "Send"
+        <form onSubmit={handleSend}>
+          <div className="flex items-end gap-2 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm transition focus-within:border-accent-green-foreground/40 focus-within:ring-2 focus-within:ring-accent-green/30">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                isListening
+                  ? "Listening…"
+                  : profile.displayName
+                    ? `Ask me anything, ${profile.displayName}…`
+                    : "Ask me anything…"
+              }
+              rows={2}
+              disabled={isLoading}
+              className={`flex-1 resize-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted/60 disabled:opacity-50 ${
+                isListening ? "text-muted italic" : ""
+              }`}
+            />
+
+            <div className="flex shrink-0 items-center gap-2 pb-0.5">
+              {/* Voice input button */}
+              {isSupported && (
+                <button
+                  type="button"
+                  onClick={isListening ? stopListening : startListening}
+                  disabled={isLoading}
+                  title={isListening ? "Stop listening" : "Speak a message"}
+                  className={`relative flex h-8 w-8 items-center justify-center rounded-xl transition-all disabled:opacity-40 ${
+                    isListening
+                      ? "bg-accent-rose/20 text-accent-rose-foreground"
+                      : "text-muted hover:bg-surface hover:text-foreground"
+                  }`}
+                >
+                  {isListening && (
+                    <span className="absolute inset-0 animate-ping rounded-xl bg-accent-rose/20" />
+                  )}
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.8}
+                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 3a4 4 0 014 4v5a4 4 0 01-8 0V7a4 4 0 014-4z"
+                    />
+                  </svg>
+                </button>
+              )}
+
+              {/* Send button */}
+              <button
+                type="submit"
+                disabled={isLoading || !input.trim()}
+                className="flex h-8 items-center gap-1.5 rounded-xl bg-hero px-3.5 text-xs font-semibold text-white transition hover:bg-hero-mid disabled:opacity-40"
+              >
+                {isLoading ? (
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-white/70 [animation-delay:0ms]" />
+                    <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-white/70 [animation-delay:150ms]" />
+                    <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-white/70 [animation-delay:300ms]" />
+                  </span>
+                ) : (
+                  <>
+                    Send
+                    <svg className="h-3 w-3 -rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-[11px] text-muted/60">
+              {isListening ? (
+                <span className="font-medium text-accent-rose-foreground">Listening — speak now</span>
+              ) : (
+                "Shift+Enter for a new line · Enter to send"
+              )}
+            </p>
+            {!isSupported && (
+              <p className="text-[11px] text-muted/40">Voice input not supported in this browser</p>
             )}
-          </button>
+          </div>
         </form>
-        <p className="mt-2 text-[11px] text-muted">
-          Shift+Enter for a new line · Enter to send
-        </p>
       </div>
     </div>
   );
 }
 
-// ── Minimal markdown renderer ────────────────────────────────────
-// Handles: **bold**, bullet lines (- or *), paragraph spacing.
-// No external library needed for this scope.
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+
 function renderContent(text: string): React.ReactNode {
   const lines = text.split("\n");
   const nodes: React.ReactNode[] = [];
@@ -201,10 +368,10 @@ function renderContent(text: string): React.ReactNode {
   const flushBullets = () => {
     if (bulletBuffer.length === 0) return;
     nodes.push(
-      <ul key={key++} className="mt-1 mb-1 space-y-0.5 pl-1">
+      <ul key={key++} className="mt-1.5 mb-1 space-y-1 pl-1">
         {bulletBuffer.map((b, i) => (
           <li key={i} className="flex items-start gap-2 leading-snug">
-            <span className="mt-[3px] shrink-0 text-[10px] text-muted">●</span>
+            <span className="mt-[4px] shrink-0 h-1.5 w-1.5 rounded-full bg-muted/50" />
             <span>{renderInline(b)}</span>
           </li>
         ))}
@@ -214,24 +381,22 @@ function renderContent(text: string): React.ReactNode {
   };
 
   for (const line of lines) {
-    // ### Section heading
     const headingMatch = line.match(/^###\s+(.+)/);
     if (headingMatch) {
       flushBullets();
       nodes.push(
-        <p key={key++} className="mt-3 mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        <p key={key++} className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
           {headingMatch[1]}
         </p>
       );
       continue;
     }
 
-    // Standalone bold-only line like **Tonight** used as a section label
     const standaloneBoldMatch = line.match(/^\*\*([^*]+)\*\*\s*$/);
     if (standaloneBoldMatch) {
       flushBullets();
       nodes.push(
-        <p key={key++} className="mt-3 mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        <p key={key++} className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
           {standaloneBoldMatch[1]}
         </p>
       );
@@ -243,6 +408,7 @@ function renderContent(text: string): React.ReactNode {
       bulletBuffer.push(bulletMatch[1]);
       continue;
     }
+
     flushBullets();
     if (line.trim() === "") {
       nodes.push(<div key={key++} className="h-2" />);
@@ -259,13 +425,43 @@ function renderContent(text: string): React.ReactNode {
 }
 
 function renderInline(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  const parts = text.split(/(\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g);
   return (
     <>
       {parts.map((part, i) => {
         const boldMatch = part.match(/^\*\*([^*]+)\*\*$/);
         if (boldMatch) {
-          return <strong key={i} className="font-semibold text-foreground">{boldMatch[1]}</strong>;
+          return (
+            <strong key={i} className="font-semibold text-foreground">
+              {boldMatch[1]}
+            </strong>
+          );
+        }
+        const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+        if (linkMatch) {
+          const [, label, href] = linkMatch;
+          if (href.startsWith("/")) {
+            return (
+              <Link
+                key={i}
+                href={href}
+                className="font-medium text-accent-green-foreground underline underline-offset-2 hover:opacity-80"
+              >
+                {label}
+              </Link>
+            );
+          }
+          return (
+            <a
+              key={i}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-accent-green-foreground underline underline-offset-2 hover:opacity-80"
+            >
+              {label}
+            </a>
+          );
         }
         return <span key={i}>{part}</span>;
       })}
@@ -273,7 +469,8 @@ function renderInline(text: string): React.ReactNode {
   );
 }
 
-// ── Message bubble sub-component ────────────────────────────────
+// ── Message bubble ────────────────────────────────────────────────────────────
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   const isLoading = message.content === "...";
@@ -281,7 +478,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   if (isUser) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-hero px-4 py-3 text-sm leading-relaxed text-white shadow-sm">
+        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-hero px-4 py-3 text-sm leading-relaxed text-white shadow-sm">
           {message.content}
         </div>
       </div>
@@ -291,16 +488,16 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   return (
     <div className="flex items-start gap-3">
       {/* Assistant avatar */}
-      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-green text-[11px] text-accent-green-foreground">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sidebar-accent/20 text-[11px] font-semibold text-sidebar-accent shadow-sm">
         ✦
       </div>
       <div
-        className={`max-w-[78%] rounded-2xl rounded-bl-sm border border-border bg-card px-4 py-3 text-sm text-foreground shadow-sm ${
+        className={`max-w-[80%] rounded-2xl rounded-bl-sm border border-border bg-card px-4 py-3 text-sm text-foreground shadow-sm ${
           isLoading ? "opacity-60" : ""
         }`}
       >
         {isLoading ? (
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1.5 py-0.5">
             <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted [animation-delay:0ms]" />
             <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted [animation-delay:150ms]" />
             <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted [animation-delay:300ms]" />

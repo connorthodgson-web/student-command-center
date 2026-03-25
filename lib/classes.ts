@@ -5,6 +5,7 @@ export type DbClassRow = {
   user_id: string;
   name: string;
   teacher_name: string | null;
+  teacher_email: string | null;
   room: string | null;
   color: string | null;
   days: Weekday[] | null;
@@ -12,6 +13,7 @@ export type DbClassRow = {
   end_time: string | null;
   meetings: ClassMeetingTime[] | null;
   schedule_label: "A" | "B" | null;
+  notes: string | null;
   created_at: string;
 };
 
@@ -23,6 +25,8 @@ export function mapDbClassToSchoolClass(row: DbClassRow): SchoolClass {
     id: row.id,
     name: row.name,
     teacherName: row.teacher_name ?? undefined,
+    // Read teacher_email and notes if the columns exist in DB (optional fields — safe with ??)
+    teacherEmail: row.teacher_email ?? undefined,
     room: row.room ?? undefined,
     color: row.color ?? undefined,
     days: row.days ?? [],
@@ -30,6 +34,7 @@ export function mapDbClassToSchoolClass(row: DbClassRow): SchoolClass {
     endTime: row.end_time ?? "",
     meetings: row.meetings ?? undefined,
     scheduleLabel: row.schedule_label ?? undefined,
+    notes: row.notes ?? undefined,
   };
 }
 
@@ -41,6 +46,7 @@ export function mapSchoolClassToInsert(
     user_id: userId,
     name: schoolClass.name.trim(),
     teacher_name: emptyToNull(schoolClass.teacherName),
+    teacher_email: emptyToNull(schoolClass.teacherEmail),
     room: emptyToNull(schoolClass.room),
     color: emptyToNull(schoolClass.color),
     days: schoolClass.days.length > 0 ? schoolClass.days : null,
@@ -51,6 +57,7 @@ export function mapSchoolClassToInsert(
         ? schoolClass.meetings
         : null,
     schedule_label: schoolClass.scheduleLabel ?? null,
+    notes: emptyToNull(schoolClass.notes),
   };
 }
 
@@ -84,6 +91,12 @@ export function mapSchoolClassToUpdate(updates: ClassUpdate) {
   }
   if ("scheduleLabel" in updates) {
     payload.schedule_label = updates.scheduleLabel ?? null;
+  }
+  if ("teacherEmail" in updates) {
+    payload.teacher_email = emptyToNull(updates.teacherEmail);
+  }
+  if ("notes" in updates) {
+    payload.notes = emptyToNull(updates.notes);
   }
 
   return payload;

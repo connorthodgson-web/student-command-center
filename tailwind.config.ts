@@ -1,4 +1,7 @@
-// UI redesign pass
+// Student Command Center — Tailwind config
+// Colors reference CSS custom properties defined in globals.css.
+// This lets dark mode and accent theming work by simply swapping CSS vars
+// without touching any component classes.
 import type { Config } from "tailwindcss";
 
 const config: Config = {
@@ -10,48 +13,74 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "#f5f7f5",
-        foreground: "#111b17",
-        muted: "#627069",
-        card: "#ffffff",
-        border: "#dce4de",
+        // ── Main surface tokens ───────────────────────────────────
+        // Simple vars — no opacity modifier needed on these
+        background: "var(--bg)",
+        foreground: "var(--fg)",
+        muted:      "var(--muted)",
+        card:       "var(--card)",
+        border:     "var(--border)",
+        surface:    "var(--surface)",
+
+        // ── Hero / dark sections ──────────────────────────────────
+        hero:         "var(--hero)",
+        "hero-mid":   "var(--hero-mid)",
+        "hero-light": "var(--hero-light)",
+
+        // ── Sidebar tokens ────────────────────────────────────────
+        // sidebar-text and sidebar-accent use RGB triplets so that
+        // Tailwind's opacity modifier syntax (e.g. /20, /50) works correctly.
+        sidebar: {
+          DEFAULT: "var(--sidebar)",
+          active:  "var(--sidebar-active)",
+          hover:   "var(--sidebar-hover)",
+          text:    "rgb(var(--sidebar-text) / <alpha-value>)",
+          accent:  "rgb(var(--sidebar-accent) / <alpha-value>)",
+        },
+
+        // ── Semantic accent palettes ──────────────────────────────
+        // DEFAULT uses RGB triplets for opacity modifier support.
+        // foreground uses simple hex vars (no opacity modifiers on fg text).
         accent: {
           green: {
-            DEFAULT: "#d4edd9",
-            foreground: "#1a4028",
+            DEFAULT:    "rgb(var(--accent-green) / <alpha-value>)",
+            foreground: "var(--accent-green-fg)",
           },
           blue: {
-            DEFAULT: "#d4e6f7",
-            foreground: "#173354",
+            DEFAULT:    "rgb(var(--accent-blue) / <alpha-value>)",
+            foreground: "var(--accent-blue-fg)",
           },
           amber: {
-            DEFAULT: "#fdefd3",
-            foreground: "#4a3000",
+            DEFAULT:    "rgb(var(--accent-amber) / <alpha-value>)",
+            foreground: "var(--accent-amber-fg)",
           },
           rose: {
-            DEFAULT: "#fde0e0",
-            foreground: "#4a1010",
+            DEFAULT:    "rgb(var(--accent-rose) / <alpha-value>)",
+            foreground: "var(--accent-rose-fg)",
           },
           purple: {
-            DEFAULT: "#ebe0fd",
-            foreground: "#2e1054",
+            DEFAULT:    "rgb(var(--accent-purple) / <alpha-value>)",
+            foreground: "var(--accent-purple-fg)",
           },
         },
-        surface: "#eef2f0",
+      },
 
-        // Deep forest green — used for hero sections and dark cards
-        hero: "#0f2117",
-        "hero-mid": "#163020",
-        "hero-light": "#1d3e28",
+      fontFamily: {
+        sans: ["Inter", "system-ui", "sans-serif"],
+      },
 
-        // Sidebar design tokens (mirrors hero palette + vivid brand accents)
-        sidebar: {
-          DEFAULT: "#0f2117",
-          active: "#1d3e28",
-          text: "#7aab8a",
-          hover: "#c8e8d0",
-          accent: "#4ade80",
-        },
+      borderRadius: {
+        "2xl": "1rem",
+        "3xl": "1.5rem",
+      },
+
+      boxShadow: {
+        "card": "0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04)",
+        "card-md": "0 4px 12px 0 rgb(0 0 0 / 0.08), 0 2px 4px -1px rgb(0 0 0 / 0.04)",
+      },
+
+      animation: {
+        "pulse-gentle": "pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
       },
     },
   },

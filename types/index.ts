@@ -1,4 +1,3 @@
-// UI redesign pass
 export type Weekday =
   | "monday"
   | "tuesday"
@@ -23,6 +22,8 @@ export interface SchoolClass {
   id: string;
   name: string;
   teacherName?: string;
+  /** Teacher's email address — used for drafting emails to teachers via the assistant. */
+  teacherEmail?: string;
   /** Days this class meets (derived from meetings if present, else direct). */
   days: Weekday[];
   /** Canonical start/end — used when all days share the same time. */
@@ -42,6 +43,8 @@ export interface SchoolClass {
    * undefined = standard schedule (meets every scheduled day).
    */
   scheduleLabel?: "A" | "B";
+  /** Optional freeform notes about the class (syllabus info, grading policy, AI tutoring context). */
+  notes?: string;
 }
 
 export type TaskStatus = "todo" | "in_progress" | "done";

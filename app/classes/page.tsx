@@ -5,7 +5,10 @@ import { ScheduleCard } from "../../components/ScheduleCard";
 import { ScheduleSetupInput } from "../../components/ScheduleSetupInput";
 import { SectionHeader } from "../../components/SectionHeader";
 import { useClasses } from "../../lib/stores/classStore";
+import { formatTimeRange } from "../../lib/schedule";
 import type { ClassMeetingTime, SchoolClass, Weekday } from "../../types";
+
+type ClassesView = "cards" | "schedule";
 
 type ScheduleLabel = "A" | "B" | "";
 
@@ -33,6 +36,7 @@ type DayTime = { start: string; end: string };
 export default function ClassesPage() {
   const { classes, loading, addClass, addClasses, deleteClass } = useClasses();
 
+  const [view, setView] = useState<ClassesView>("schedule");
   const [setupVisible, setSetupVisible] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -40,12 +44,14 @@ export default function ClassesPage() {
 
   const [name, setName] = useState("");
   const [teacherName, setTeacherName] = useState("");
+  const [teacherEmail, setTeacherEmail] = useState("");
   const [days, setDays] = useState<Weekday[]>([]);
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [usePerDayTimes, setUsePerDayTimes] = useState(false);
   const [dayTimes, setDayTimes] = useState<Partial<Record<Weekday, DayTime>>>({});
   const [room, setRoom] = useState("");
+  const [notes, setNotes] = useState("");
   const [color, setColor] = useState(COLOR_SWATCHES[0].value);
   const [scheduleLabel, setScheduleLabel] = useState<ScheduleLabel>("");
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -82,12 +88,14 @@ export default function ClassesPage() {
   const resetForm = () => {
     setName("");
     setTeacherName("");
+    setTeacherEmail("");
     setDays([]);
     setStartTime("");
     setEndTime("");
     setUsePerDayTimes(false);
     setDayTimes({});
     setRoom("");
+    setNotes("");
     setColor(COLOR_SWATCHES[0].value);
     setScheduleLabel("");
     setValidationError(null);
@@ -128,11 +136,13 @@ export default function ClassesPage() {
       await addClass({
         name: name.trim(),
         teacherName: teacherName.trim() || undefined,
+        teacherEmail: teacherEmail.trim() || undefined,
         days,
         startTime: canonicalStart,
         endTime: canonicalEnd,
         meetings,
         room: room.trim() || undefined,
+        notes: notes.trim() || undefined,
         color,
         scheduleLabel: scheduleLabel || undefined,
       });
@@ -196,21 +206,41 @@ export default function ClassesPage() {
       )}
 
       {showActionBar && (
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setSetupVisible(true)}
-            className="rounded-full bg-accent-green-foreground px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-          >
-            + Build from description
-          </button>
-          <button
-            type="button"
-            onClick={() => setFormOpen(true)}
-            className="rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition hover:bg-surface hover:text-foreground"
-          >
-            Add single class manually
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSetupVisible(true)}
+              className="rounded-full bg-accent-green-foreground px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+            >
+              + Build from description
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormOpen(true)}
+              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition hover:bg-surface hover:text-foreground"
+            >
+              Add single class manually
+            </button>
+          </div>
+          {hasClasses && (
+            <div className="flex rounded-full border border-border bg-card p-0.5">
+              {(["schedule", "cards"] as ClassesView[]).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                    view === v
+                      ? "bg-foreground text-white"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {v === "schedule" ? "Schedule" : "Cards"}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -237,18 +267,32 @@ export default function ClassesPage() {
               />
             </label>
 
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-foreground">
-                Teacher <span className="text-xs font-normal text-muted">(optional)</span>
-              </span>
-              <input
-                type="text"
-                value={teacherName}
-                onChange={(e) => setTeacherName(e.target.value)}
-                placeholder="e.g. Mr. Alvarez"
-                className={inputClass}
-              />
-            </label>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-foreground">
+                  Teacher <span className="text-xs font-normal text-muted">(optional)</span>
+                </span>
+                <input
+                  type="text"
+                  value={teacherName}
+                  onChange={(e) => setTeacherName(e.target.value)}
+                  placeholder="e.g. Mr. Alvarez"
+                  className={inputClass}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-foreground">
+                  Teacher email <span className="text-xs font-normal text-muted">(optional)</span>
+                </span>
+                <input
+                  type="email"
+                  value={teacherEmail}
+                  onChange={(e) => setTeacherEmail(e.target.value)}
+                  placeholder="e.g. alvarez@school.edu"
+                  className={inputClass}
+                />
+              </label>
+            </div>
 
             <fieldset>
               <legend className="mb-2 text-sm font-medium text-foreground">
@@ -364,6 +408,19 @@ export default function ClassesPage() {
               />
             </label>
 
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-foreground">
+                Notes <span className="text-xs font-normal text-muted">(optional)</span>
+              </span>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="e.g. Grading policy, syllabus notes, office hours…"
+                rows={2}
+                className="w-full resize-none rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40"
+              />
+            </label>
+
             <fieldset>
               <legend className="mb-2 text-sm font-medium text-foreground">Color</legend>
               <div className="flex flex-wrap gap-2">
@@ -449,7 +506,7 @@ export default function ClassesPage() {
         </section>
       )}
 
-      {!loading && hasClasses ? (
+      {!loading && hasClasses && view === "cards" && (
         <div className="grid gap-4 md:grid-cols-2">
           {classes.map((schoolClass) => (
             <ScheduleCard
@@ -459,23 +516,194 @@ export default function ClassesPage() {
             />
           ))}
         </div>
-      ) : (
-        !loading &&
-        !setupVisible && (
-          <div className="space-y-4 rounded-2xl border border-dashed border-border bg-card p-10 text-center">
-            <p className="text-sm text-muted">
-              No classes yet. Describe your schedule above and the assistant will set it all up for you.
-            </p>
-            <button
-              type="button"
-              onClick={() => setSetupVisible(true)}
-              className="rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
-            >
-              Describe my schedule
-            </button>
-          </div>
-        )
+      )}
+
+      {!loading && hasClasses && view === "schedule" && (
+        <DayTypeScheduleView classes={classes} />
+      )}
+
+      {!loading && !hasClasses && !setupVisible && (
+        <div className="space-y-4 rounded-2xl border border-dashed border-border bg-card p-10 text-center">
+          <p className="text-sm text-muted">
+            No classes yet. Describe your schedule above and the assistant will set it all up for you.
+          </p>
+          <button
+            type="button"
+            onClick={() => setSetupVisible(true)}
+            className="rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+          >
+            Describe my schedule
+          </button>
+        </div>
       )}
     </main>
+  );
+}
+
+// ─── Day-type schedule view ──────────────────────────────────────────────────
+
+// Badge style per day label — extend this map to support more day types
+const DAY_LABEL_STYLE: Record<string, { bg: string; text: string }> = {
+  A: { bg: "bg-accent-blue", text: "text-accent-blue-foreground" },
+  B: { bg: "bg-accent-purple", text: "text-accent-purple-foreground" },
+};
+
+function getDayLabelStyle(label: string) {
+  return DAY_LABEL_STYLE[label] ?? { bg: "bg-surface", text: "text-muted" };
+}
+
+function sortByStartTime(a: SchoolClass, b: SchoolClass): number {
+  const aTime = a.startTime ?? "00:00";
+  const bTime = b.startTime ?? "00:00";
+  return aTime.localeCompare(bTime);
+}
+
+function ScheduleBlockRow({ cls }: { cls: SchoolClass }) {
+  const timeStr = cls.startTime
+    ? formatTimeRange(cls.startTime, cls.endTime)
+    : null;
+
+  return (
+    <div className="flex items-stretch gap-0 py-3 border-b border-border/50 last:border-0">
+      {/* Left color accent bar */}
+      <div
+        className="mr-3 w-1 shrink-0 rounded-full"
+        style={{ backgroundColor: cls.color ?? "#d4edd9" }}
+      />
+
+      {/* Class info */}
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <span className="text-sm font-semibold text-foreground leading-snug">
+            {cls.name}
+          </span>
+          {timeStr && (
+            <span className="shrink-0 text-sm font-medium text-foreground tabular-nums">
+              {timeStr}
+            </span>
+          )}
+        </div>
+
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
+          {cls.teacherName && <span>{cls.teacherName}</span>}
+          {cls.teacherName && cls.room && <span>·</span>}
+          {cls.room && <span>{cls.room}</span>}
+          {!timeStr && <span className="italic">Time not set</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type DayLabel = NonNullable<SchoolClass["scheduleLabel"]>;
+
+function DayTypeScheduleView({ classes }: { classes: SchoolClass[] }) {
+  // Collect unique day labels dynamically (supports A, B, or any future label)
+  const dayLabels: DayLabel[] = Array.from(
+    new Set(
+      classes
+        .map((c) => c.scheduleLabel)
+        .filter((l): l is DayLabel => l !== undefined)
+    )
+  ).sort();
+
+  const everyday = [...classes.filter((c) => !c.scheduleLabel)].sort(sortByStartTime);
+  const hasRotation = dayLabels.length > 0;
+
+  const [activeTab, setActiveTab] = useState<DayLabel | "">(dayLabels[0] ?? "");
+
+  // If the active tab is no longer in labels (e.g. after data change), reset
+  const effectiveTab: DayLabel | "" = (dayLabels as string[]).includes(activeTab) ? activeTab : dayLabels[0] ?? "";
+
+  if (!hasRotation) {
+    // No rotation — single schedule view
+    return (
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-border px-5 py-3.5">
+          <h2 className="text-sm font-semibold text-foreground">Schedule</h2>
+          <span className="ml-auto text-xs text-muted">
+            {everyday.length} {everyday.length === 1 ? "class" : "classes"}
+          </span>
+        </div>
+        <div className="px-5">
+          {everyday.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted">No classes yet.</p>
+          ) : (
+            everyday.map((cls) => <ScheduleBlockRow key={cls.id} cls={cls} />)
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Rotation exists — tab-based view
+  const rotationClasses = [...classes.filter((c) => effectiveTab && c.scheduleLabel === effectiveTab)].sort(sortByStartTime);
+  // Merge rotation + everyday classes into a single sorted timetable for the tab
+  const tabClasses = [...rotationClasses, ...everyday].sort(sortByStartTime);
+
+  return (
+    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      {/* Tab bar */}
+      <div className="flex border-b border-border">
+        {dayLabels.map((label) => {
+          const count = classes.filter((c) => c.scheduleLabel === label).length;
+          const isActive = label === effectiveTab;
+          const { bg, text } = getDayLabelStyle(label);
+
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setActiveTab(label as DayLabel)}
+              className={`flex items-center gap-2 px-5 py-3.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                isActive
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted hover:text-foreground"
+              }`}
+            >
+              <span
+                className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${bg} ${text}`}
+              >
+                {label}
+              </span>
+              {label} Day
+              <span className="rounded-full bg-surface px-1.5 py-0.5 text-[10px] text-muted tabular-nums">
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab content */}
+      <div className="px-5">
+        {tabClasses.length === 0 ? (
+          <div className="py-10 text-center">
+            <p className="text-sm text-muted">No classes on {effectiveTab} Day yet.</p>
+            <p className="mt-1 text-xs text-muted">
+              Add classes and label them &ldquo;{effectiveTab}-Day&rdquo; to see them here.
+            </p>
+          </div>
+        ) : (
+          <>
+            {rotationClasses.map((cls) => (
+              <ScheduleBlockRow key={cls.id} cls={cls} />
+            ))}
+            {everyday.length > 0 && rotationClasses.length > 0 && (
+              <div className="my-1 flex items-center gap-3">
+                <div className="h-px flex-1 bg-border/40" />
+                <span className="text-[10px] uppercase tracking-widest text-muted/60">
+                  Every day
+                </span>
+                <div className="h-px flex-1 bg-border/40" />
+              </div>
+            )}
+            {everyday.map((cls) => (
+              <ScheduleBlockRow key={cls.id} cls={cls} />
+            ))}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

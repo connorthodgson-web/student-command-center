@@ -1,4 +1,3 @@
-// UI redesign pass
 import {
   formatTimeRange,
   getEffectiveDays,
@@ -29,7 +28,7 @@ export function ScheduleCard({ schoolClass, onDelete }: ScheduleCardProps) {
   const meetings = sortedMeetings(schoolClass);
 
   return (
-    <article className="flex overflow-hidden rounded-2xl border border-border bg-card shadow-sm transition-shadow hover:shadow-md">
+    <article className="flex overflow-hidden rounded-2xl border border-border bg-card shadow-card transition-shadow hover:shadow-card-md">
       {/* Left color bar */}
       <div
         className="w-1.5 shrink-0"
@@ -58,14 +57,29 @@ export function ScheduleCard({ schoolClass, onDelete }: ScheduleCardProps) {
             </div>
 
             {(schoolClass.teacherName || schoolClass.room) && (
-              <p className="mt-0.5 text-xs text-muted">
-                {[
-                  schoolClass.teacherName,
-                  schoolClass.room ? `${schoolClass.room}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                {schoolClass.teacherName && (
+                  <span className="text-xs text-muted">
+                    {schoolClass.teacherEmail ? (
+                      <a
+                        href={`mailto:${schoolClass.teacherEmail}`}
+                        className="hover:underline hover:text-foreground transition-colors"
+                        title={`Email ${schoolClass.teacherName}`}
+                      >
+                        {schoolClass.teacherName}
+                      </a>
+                    ) : (
+                      schoolClass.teacherName
+                    )}
+                  </span>
+                )}
+                {schoolClass.teacherName && schoolClass.room && (
+                  <span className="text-xs text-muted/40">·</span>
+                )}
+                {schoolClass.room && (
+                  <span className="text-xs text-muted">{schoolClass.room}</span>
+                )}
+              </div>
             )}
           </div>
 
@@ -121,6 +135,13 @@ export function ScheduleCard({ schoolClass, onDelete }: ScheduleCardProps) {
             </p>
           ) : null}
         </div>
+
+        {/* Notes — shown when present, truncated for card view */}
+        {schoolClass.notes && (
+          <p className="mt-3 border-t border-border/50 pt-2.5 text-xs text-muted line-clamp-2">
+            {schoolClass.notes}
+          </p>
+        )}
       </div>
     </article>
   );

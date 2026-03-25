@@ -80,7 +80,7 @@ function formatTodayLong(): string {
 
 export default function DashboardPage() {
   const { classes, addClasses } = useClasses();
-  const { tasks, addTask, completeTask, deleteTask } = useTaskStore();
+  const { tasks, removingIds, addTask, completeTask, deleteTask } = useTaskStore();
   const { preferences: reminderPreferences } = useReminderStore();
   const { todayDayType, setTodayDayType } = useScheduleConfig();
   const { entries: calendarEntries, getEntryForDate } = useCalendar();
@@ -260,58 +260,115 @@ export default function DashboardPage() {
           </section>
         )}
 
-        {/* Today's schedule strip */}
+        {/* Today's schedule snapshot */}
         {!noSchoolToday && todayClasses.length > 0 && (
           <section>
-            <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
-              Today&apos;s Schedule
-            </h2>
-            <div className="flex flex-wrap gap-2.5">
-              {todayClasses.map((cls) => {
-                const time = getClassTimeForDay(cls, todayWeekday);
-                const dotColor = cls.color ?? "#d4edd9";
-                return (
-                  <div
-                    key={cls.id}
-                    className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-card transition-shadow hover:shadow-card-md"
-                  >
-                    {/* Color dot with slight shadow for depth */}
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+                Today&apos;s Schedule
+              </h2>
+              <Link
+                href="/classes"
+                className="text-[11px] text-muted transition-colors hover:text-foreground"
+              >
+                View all →
+              </Link>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-card">
+              {(() => {
+                const nowMinutes =
+                  new Date().getHours() * 60 + new Date().getMinutes();
+
+                type CStatus = "current" | "next" | "upcoming" | "done";
+
+                const withStatus = todayClasses.map((cls) => {
+                  const time = getClassTimeForDay(cls, todayWeekday);
+                  if (!time) return { cls, time, status: "upcoming" as CStatus };
+                  const [sh, sm] = time.startTime.split(":").map(Number);
+                  const [eh, em] = time.endTime.split(":").map(Number);
+                  const startMin = sh * 60 + sm;
+                  const endMin = eh * 60 + em;
+                  if (nowMinutes >= startMin && nowMinutes < endMin)
+                    return { cls, time, status: "current" as CStatus };
+                  if (nowMinutes < startMin)
+                    return { cls, time, status: "upcoming" as CStatus };
+                  return { cls, time, status: "done" as CStatus };
+                });
+
+                // Mark only the first upcoming as "next"
+                let foundNext = false;
+                const entries = withStatus.map((e) => {
+                  if (e.status === "upcoming" && !foundNext) {
+                    foundNext = true;
+                    return { ...e, status: "next" as CStatus };
+                  }
+                  return e;
+                });
+
+                return entries.map(({ cls, time, status }, i) => {
+                  const dotColor = cls.color ?? "#d4edd9";
+                  const isDone = status === "done";
+                  const isCurrent = status === "current";
+                  const isNext = status === "next";
+                  return (
                     <div
-                      className="h-2.5 w-2.5 shrink-0 rounded-full shadow-sm"
-                      style={{ backgroundColor: dotColor }}
-                    />
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-semibold text-foreground leading-tight">
+                      key={cls.id}
+                      className={`flex items-center gap-3 px-4 py-3 ${
+                        i < entries.length - 1 ? "border-b border-border/50" : ""
+                      } ${isDone ? "opacity-40" : ""} ${
+                        isCurrent ? "bg-accent-green/5" : ""
+                      }`}
+                    >
+                      <div
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: dotColor }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className={`text-sm font-semibold leading-tight ${
+                            isDone ? "text-muted" : "text-foreground"
+                          }`}
+                        >
                           {cls.name}
                         </p>
-                        {cls.scheduleLabel && (
-                          <span
-                            className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                              cls.scheduleLabel === "A"
-                                ? "bg-accent-blue text-accent-blue-foreground"
-                                : "bg-accent-purple text-accent-purple-foreground"
-                            }`}
-                          >
-                            {cls.scheduleLabel}
-                          </span>
+                        {time && (
+                          <p className="mt-0.5 text-xs text-muted">
+                            {formatTimeRange(time.startTime, time.endTime)}
+                            {cls.room ? (
+                              <span className="opacity-60"> · {cls.room}</span>
+                            ) : null}
+                          </p>
                         )}
                       </div>
-                      {time && (
-                        <p className="mt-0.5 text-xs text-muted">
-                          {formatTimeRange(time.startTime, time.endTime)}
-                          {cls.room ? (
-                            <>
-                              <span className="mx-1 opacity-40">·</span>
-                              {cls.room}
-                            </>
-                          ) : null}
-                        </p>
+                      {isCurrent && (
+                        <span className="shrink-0 rounded-full bg-accent-green/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent-green-foreground">
+                          Now
+                        </span>
+                      )}
+                      {isNext && (
+                        <span className="shrink-0 rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                          Next
+                        </span>
+                      )}
+                      {isDone && (
+                        <svg
+                          className="h-3.5 w-3.5 shrink-0 text-muted/40"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
                       )}
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           </section>
         )}
@@ -381,6 +438,7 @@ export default function DashboardPage() {
                           task={task}
                           schoolClass={classes.find((c) => c.id === task.classId)}
                           isOverdue={bucket === "overdue"}
+                          isRemoving={removingIds.has(task.id)}
                           onComplete={completeTask}
                           onDelete={deleteTask}
                         />

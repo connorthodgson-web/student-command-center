@@ -20,11 +20,13 @@ type ScheduleCardProps = {
   schoolClass: SchoolClass;
   /** Optional delete handler — shows a remove button when provided */
   onDelete?: () => void;
+  /** Optional edit handler — shows an edit button when provided */
+  onEdit?: () => void;
   /** Optional handler to open the Class Knowledge editor */
   onKnowledge?: () => void;
 };
 
-export function ScheduleCard({ schoolClass, onDelete, onKnowledge }: ScheduleCardProps) {
+export function ScheduleCard({ schoolClass, onDelete, onEdit, onKnowledge }: ScheduleCardProps) {
   const effectiveDays = getEffectiveDays(schoolClass);
   const mixedTimes = hasMixedTimes(schoolClass);
   const meetings = sortedMeetings(schoolClass);
@@ -98,7 +100,7 @@ export function ScheduleCard({ schoolClass, onDelete, onKnowledge }: ScheduleCar
                 onClick={onKnowledge}
                 title="Class knowledge"
                 aria-label={`Edit knowledge for ${schoolClass.name}`}
-                className={`rounded-full p-1 transition-colors hover:bg-surface ${
+                className={`rounded-full p-1.5 transition-colors hover:bg-surface ${
                   (schoolClass.syllabusText || schoolClass.classNotes || schoolClass.isApCourse)
                     ? "text-accent-green-foreground"
                     : "text-muted hover:text-foreground"
@@ -109,11 +111,24 @@ export function ScheduleCard({ schoolClass, onDelete, onKnowledge }: ScheduleCar
                 </svg>
               </button>
             )}
+            {onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                className="shrink-0 rounded-full p-1.5 text-muted transition-colors hover:bg-surface hover:text-foreground"
+                title="Edit class"
+                aria-label={`Edit ${schoolClass.name}`}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            )}
             {onDelete && (
               <button
                 type="button"
                 onClick={onDelete}
-                className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-surface hover:text-foreground"
+                className="shrink-0 rounded-full p-1.5 text-muted transition-colors hover:bg-surface hover:text-foreground"
                 title="Remove class"
                 aria-label={`Remove ${schoolClass.name}`}
               >

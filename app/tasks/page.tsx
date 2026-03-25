@@ -13,7 +13,7 @@ type ViewMode = "timeline" | "by-class";
 
 export default function TasksPage() {
   const { classes } = useClasses();
-  const { tasks, addTask, completeTask, deleteTask } = useTaskStore();
+  const { tasks, removingIds, addTask, completeTask, deleteTask } = useTaskStore();
   const [viewMode, setViewMode] = useState<ViewMode>("timeline");
   const [showCompleted, setShowCompleted] = useState(false);
 
@@ -90,20 +90,23 @@ export default function TasksPage() {
               onClick={() => setShowCompleted((v) => !v)}
               className="text-xs text-muted hover:text-foreground transition-colors"
             >
-              {showCompleted
-                ? "Hide completed"
-                : `Show ${completedTasks.length} completed`}
+              {showCompleted ? "Hide completed" : `Show ${completedTasks.length} completed`}
             </button>
           )}
         </div>
 
         <div className="mt-4">
           {sortedTasks.length === 0 ? (
-            <p className="text-sm text-muted">
-              {activeTasks.length === 0
-                ? "No tasks yet — add one above."
-                : "All tasks are complete!"}
-            </p>
+            <div className="rounded-xl border border-dashed border-border px-5 py-8 text-center">
+              <p className="text-sm font-medium text-foreground">
+                {tasks.length === 0 ? "No tasks yet." : "All caught up!"}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                {tasks.length === 0
+                  ? "Add your first task above — try \"Bio test Friday\" or \"Essay due tomorrow\"."
+                  : "No open tasks right now. Add a new one above when you're ready."}
+              </p>
+            </div>
           ) : viewMode === "timeline" ? (
             <div className="space-y-3">
               {sortedTasks.map((task) => (
@@ -111,6 +114,7 @@ export default function TasksPage() {
                   key={task.id}
                   task={task}
                   schoolClass={classes.find((c) => c.id === task.classId)}
+                  isRemoving={removingIds.has(task.id)}
                   onComplete={task.status !== "done" ? completeTask : undefined}
                   onDelete={deleteTask}
                 />
@@ -144,6 +148,7 @@ export default function TasksPage() {
                           key={task.id}
                           task={task}
                           schoolClass={classes.find((c) => c.id === task.classId)}
+                          isRemoving={removingIds.has(task.id)}
                           onComplete={task.status !== "done" ? completeTask : undefined}
                           onDelete={deleteTask}
                         />

@@ -60,9 +60,11 @@ const CONSTRAINT_EXAMPLES = [
 function ActivityCard({
   activity,
   onDelete,
+  onEdit,
 }: {
   activity: Activity;
   onDelete: () => void;
+  onEdit?: () => void;
 }) {
   return (
     <div className="flex items-start justify-between rounded-2xl border border-border bg-card px-4 py-3.5 shadow-card-sm">
@@ -78,15 +80,30 @@ function ActivityCard({
           <p className="mt-1 text-xs text-muted/70 italic">{activity.notes}</p>
         )}
       </div>
-      <button
-        onClick={onDelete}
-        className="ml-3 shrink-0 rounded-lg p-1.5 text-muted/50 transition-colors hover:bg-surface hover:text-red-400"
-        aria-label="Delete activity"
-      >
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+      <div className="ml-3 flex shrink-0 items-center gap-1">
+        {onEdit && (
+          <button
+            onClick={onEdit}
+            className="rounded-lg p-2 text-muted/50 transition-colors hover:bg-surface hover:text-foreground"
+            aria-label="Edit activity"
+            title="Edit activity"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+          </button>
+        )}
+        <button
+          onClick={onDelete}
+          className="rounded-lg p-2 text-muted/50 transition-colors hover:bg-surface hover:text-red-400"
+          aria-label="Delete activity"
+          title="Delete activity"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }
@@ -111,8 +128,9 @@ function ConstraintItem({
       </div>
       <button
         onClick={onDelete}
-        className="shrink-0 rounded-lg p-1.5 text-muted/50 transition-colors hover:bg-surface hover:text-red-400"
+        className="shrink-0 rounded-lg p-2 text-muted/50 transition-colors hover:bg-surface hover:text-red-400"
         aria-label="Remove"
+        title="Remove"
       >
         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -323,6 +341,21 @@ export default function ActivitiesPage() {
     saveActivities(updated);
   };
 
+  // Pre-fill the NL input with an activity's details for easy correction, then delete the original
+  const editActivity = (activity: Activity) => {
+    const dayStr = activity.daysOfWeek
+      .map((d) => d.charAt(0).toUpperCase() + d.slice(1, 3))
+      .join("/");
+    const timeStr = `${activity.startTime}–${activity.endTime}`;
+    const text = [activity.title, dayStr, timeStr, activity.location].filter(Boolean).join(" ");
+    deleteActivity(activity.id);
+    setNlInput(text);
+    setNlParsed(null);
+    setNlError(null);
+    setManualOpen(false);
+    nlInputRef.current?.focus();
+  };
+
   // ── Constraint handlers ──────────────────────────────────────────────────────
 
   const handleAddConstraint = (e: React.FormEvent) => {
@@ -348,7 +381,21 @@ export default function ActivitiesPage() {
     saveConstraints(updated);
   };
 
-  if (!hydrated) return null;
+  if (!hydrated) {
+    return (
+      <div className="min-h-screen bg-background px-4 py-8 md:px-8 md:py-10">
+        <div className="mx-auto max-w-2xl space-y-4">
+          <div className="h-8 w-32 animate-pulse rounded-lg bg-surface" />
+          <div className="h-4 w-64 animate-pulse rounded-lg bg-surface" />
+          <div className="mt-6 space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-16 animate-pulse rounded-2xl bg-surface" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const todayActivities = getTodayActivities(activities);
 
@@ -452,7 +499,12 @@ export default function ActivitiesPage() {
           {activities.length > 0 ? (
             <div className="space-y-2">
               {activities.map((a) => (
-                <ActivityCard key={a.id} activity={a} onDelete={() => deleteActivity(a.id)} />
+                <ActivityCard
+                  key={a.id}
+                  activity={a}
+                  onEdit={() => editActivity(a)}
+                  onDelete={() => deleteActivity(a.id)}
+                />
               ))}
             </div>
           ) : (

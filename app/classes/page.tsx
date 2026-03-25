@@ -47,6 +47,9 @@ export default function ClassesPage() {
   // Class Knowledge modal
   const [knowledgeClass, setKnowledgeClass] = useState<SchoolClass | null>(null);
 
+  // Editing state — when set, the manual form saves an update instead of a new class
+  const [editingClassId, setEditingClassId] = useState<string | null>(null);
+
   const [name, setName] = useState("");
   const [teacherName, setTeacherName] = useState("");
   const [teacherEmail, setTeacherEmail] = useState("");
@@ -105,6 +108,38 @@ export default function ClassesPage() {
     setScheduleLabel("");
     setValidationError(null);
     setMutationError(null);
+    setEditingClassId(null);
+  };
+
+  const loadClassIntoForm = (cls: SchoolClass) => {
+    setName(cls.name);
+    setTeacherName(cls.teacherName ?? "");
+    setTeacherEmail(cls.teacherEmail ?? "");
+    setRoom(cls.room ?? "");
+    setNotes(cls.notes ?? "");
+    setColor(cls.color ?? COLOR_SWATCHES[0].value);
+    setScheduleLabel((cls.scheduleLabel as ScheduleLabel) ?? "");
+    if (cls.meetings && cls.meetings.length > 0) {
+      setDays(cls.meetings.map((m) => m.day));
+      setUsePerDayTimes(true);
+      const dt: Partial<Record<Weekday, DayTime>> = {};
+      cls.meetings.forEach((m) => {
+        dt[m.day] = { start: m.startTime, end: m.endTime };
+      });
+      setDayTimes(dt);
+      setStartTime(cls.startTime ?? "");
+      setEndTime(cls.endTime ?? "");
+    } else {
+      setDays(cls.days ?? []);
+      setStartTime(cls.startTime ?? "");
+      setEndTime(cls.endTime ?? "");
+      setUsePerDayTimes(false);
+      setDayTimes({});
+    }
+    setValidationError(null);
+    setMutationError(null);
+    setEditingClassId(cls.id);
+    setFormOpen(true);
   };
 
   const handleManualSubmit = async (event: React.FormEvent) => {
@@ -139,7 +174,7 @@ export default function ClassesPage() {
 
     try {
       const apInfo = detectApCourse(name.trim());
-      await addClass({
+      const classData = {
         name: name.trim(),
         teacherName: teacherName.trim() || undefined,
         teacherEmail: teacherEmail.trim() || undefined,
@@ -153,7 +188,13 @@ export default function ClassesPage() {
         scheduleLabel: scheduleLabel || undefined,
         isApCourse: apInfo.isApCourse || undefined,
         apCourseKey: apInfo.apCourseKey ?? undefined,
-      });
+      };
+
+      if (editingClassId) {
+        await updateClass(editingClassId, classData);
+      } else {
+        await addClass(classData);
+      }
 
       resetForm();
       setFormOpen(false);
@@ -255,9 +296,11 @@ export default function ClassesPage() {
       {!loading && formOpen && (
         <section className="space-y-5 rounded-2xl border border-border bg-card p-6 shadow-sm">
           <div>
-            <h2 className="text-base font-semibold text-foreground">Add a single class</h2>
+            <h2 className="text-base font-semibold text-foreground">
+              {editingClassId ? "Edit class" : "Add a single class"}
+            </h2>
             <p className="mt-0.5 text-sm text-muted">
-              Fill in what you know - everything except the class name is optional.
+              Fill in what you know — everything except the class name is optional.
             </p>
           </div>
 
@@ -500,7 +543,7 @@ export default function ClassesPage() {
                 type="submit"
                 className="rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
               >
-                Add Class
+                {editingClassId ? "Save Changes" : "Add Class"}
               </button>
               <button
                 type="button"
@@ -520,6 +563,7 @@ export default function ClassesPage() {
             <ScheduleCard
               key={schoolClass.id}
               schoolClass={schoolClass}
+              onEdit={() => loadClassIntoForm(schoolClass)}
               onDelete={() => void deleteClass(schoolClass.id)}
               onKnowledge={() => setKnowledgeClass(schoolClass)}
             />
@@ -560,9 +604,274 @@ export default function ClassesPage() {
   );
 }
 
+// ─── Timeline helpers ─────────────────────────────────────────────────────────
+
+function parseTimeMinutes(timeStr: string): number {
+  if (!timeStr) return 0;
+  const parts = timeStr.split(":");
+  return (Number(parts[0]) || 0) * 60 + (Number(parts[1]) || 0);
+}
+
+function getClassDisplayTime(
+  cls: SchoolClass
+): { startMin: number; endMin: number } | null {
+  if (cls.startTime && cls.endTime) {
+    return {
+      startMin: parseTimeMinutes(cls.startTime),
+      endMin: parseTimeMinutes(cls.endTime),
+    };
+  }
+  if (cls.meetings && cls.meetings.length > 0) {
+    const first = cls.meetings[0];
+    return {
+      startMin: parseTimeMinutes(first.startTime),
+      endMin: parseTimeMinutes(first.endTime),
+    };
+  }
+  return null;
+}
+
+function hourLabel(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const suffix = h >= 12 ? "PM" : "AM";
+  const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${display}${suffix}`;
+}
+
+const PX_PER_MIN = 1.2; // 72px per hour — readable without being too tall
+const TOP_PAD = 20; // px above first hour line
+
+// ─── Schedule timeline ────────────────────────────────────────────────────────
+
+function ScheduleTimeline({
+  classes,
+  onKnowledge,
+}: {
+  classes: SchoolClass[];
+  onKnowledge?: (cls: SchoolClass) => void;
+}) {
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  type TimedEntry = { cls: SchoolClass; time: { startMin: number; endMin: number } };
+
+  const timedEntries: TimedEntry[] = classes
+    .map((cls) => {
+      const time = getClassDisplayTime(cls);
+      return time ? { cls, time } : null;
+    })
+    .filter((e): e is TimedEntry => e !== null)
+    .sort((a, b) => a.time.startMin - b.time.startMin);
+
+  const untimedClasses = classes.filter((cls) => !getClassDisplayTime(cls));
+
+  if (timedEntries.length === 0) {
+    return (
+      <div className="divide-y divide-border/50 px-5">
+        {untimedClasses.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted">No classes yet.</p>
+        ) : (
+          untimedClasses.map((cls) => (
+            <UntimedClassRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />
+          ))
+        )}
+      </div>
+    );
+  }
+
+  const allMins = timedEntries.flatMap((e) => [e.time.startMin, e.time.endMin]);
+  const dayStartMin = Math.floor(Math.min(...allMins) / 60) * 60;
+  const dayEndMin = Math.ceil(Math.max(...allMins) / 60) * 60;
+  const totalMinutes = dayEndMin - dayStartMin;
+  const containerHeight = totalMinutes * PX_PER_MIN + TOP_PAD + 28;
+
+  const hourMarkers: number[] = [];
+  for (let m = dayStartMin; m <= dayEndMin; m += 60) {
+    hourMarkers.push(m);
+  }
+  const nowInRange = nowMinutes >= dayStartMin && nowMinutes <= dayEndMin;
+
+  return (
+    <div className="px-5 py-4">
+      <div className="flex">
+        {/* Time axis */}
+        <div className="relative w-12 shrink-0 select-none" style={{ height: containerHeight }}>
+          {hourMarkers.map((min) => (
+            <div
+              key={min}
+              className="absolute right-2 -translate-y-1/2 text-[10px] tabular-nums text-muted"
+              style={{ top: (min - dayStartMin) * PX_PER_MIN + TOP_PAD }}
+            >
+              {hourLabel(min)}
+            </div>
+          ))}
+        </div>
+
+        {/* Grid + blocks */}
+        <div className="relative flex-1" style={{ height: containerHeight }}>
+          {/* Hour grid lines */}
+          {hourMarkers.map((min) => (
+            <div
+              key={min}
+              className="absolute inset-x-0 border-t border-border/40"
+              style={{ top: (min - dayStartMin) * PX_PER_MIN + TOP_PAD }}
+            />
+          ))}
+
+          {/* "Now" indicator line */}
+          {nowInRange && (
+            <div
+              className="absolute inset-x-0 z-10 flex items-center"
+              style={{ top: (nowMinutes - dayStartMin) * PX_PER_MIN + TOP_PAD }}
+            >
+              <div className="h-2 w-2 shrink-0 -ml-1 rounded-full bg-accent-green-foreground" />
+              <div className="flex-1 border-t-2 border-accent-green-foreground/50" />
+            </div>
+          )}
+
+          {/* Class blocks */}
+          {timedEntries.map(({ cls, time }) => {
+            const top = (time.startMin - dayStartMin) * PX_PER_MIN + TOP_PAD;
+            const rawHeight = (time.endMin - time.startMin) * PX_PER_MIN;
+            const height = Math.max(rawHeight - 4, 28);
+            const duration = time.endMin - time.startMin;
+            const dotColor = cls.color ?? "#d4edd9";
+
+            const startStr =
+              cls.startTime || (cls.meetings?.[0]?.startTime ?? "");
+            const endStr = cls.endTime || (cls.meetings?.[0]?.endTime ?? "");
+
+            return (
+              <div
+                key={cls.id}
+                className="group absolute left-0 right-0 overflow-hidden rounded-xl border-l-4 transition-shadow hover:shadow-sm"
+                style={{
+                  top: top + 2,
+                  height,
+                  backgroundColor: `${dotColor}30`,
+                  borderLeftColor: dotColor,
+                }}
+              >
+                <div className="flex h-full items-start justify-between gap-2 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="truncate text-xs font-semibold leading-tight text-foreground">
+                        {cls.name}
+                      </span>
+                      {cls.scheduleLabel && (
+                        <span
+                          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                            cls.scheduleLabel === "A"
+                              ? "bg-accent-blue text-accent-blue-foreground"
+                              : "bg-accent-purple text-accent-purple-foreground"
+                          }`}
+                        >
+                          {cls.scheduleLabel}
+                        </span>
+                      )}
+                      {cls.isApCourse && (
+                        <span className="shrink-0 rounded-full bg-accent-amber px-1.5 py-0.5 text-[9px] font-bold text-accent-amber-foreground">
+                          AP
+                        </span>
+                      )}
+                    </div>
+                    {duration >= 45 && (cls.teacherName || cls.room) && (
+                      <p className="mt-0.5 truncate text-[10px] text-muted">
+                        {[cls.teacherName, cls.room].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
+                    {duration >= 30 && startStr && (
+                      <p className="mt-0.5 text-[10px] tabular-nums text-muted">
+                        {formatTimeRange(startStr, endStr)}
+                      </p>
+                    )}
+                  </div>
+                  {onKnowledge && (
+                    <button
+                      type="button"
+                      onClick={() => onKnowledge(cls)}
+                      title="Class knowledge"
+                      className={`shrink-0 rounded-full p-1 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10 ${
+                        cls.syllabusText || cls.classNotes || cls.isApCourse
+                          ? "text-accent-green-foreground"
+                          : "text-muted"
+                      }`}
+                    >
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Untimed classes below timeline */}
+      {untimedClasses.length > 0 && (
+        <div className="mt-6 border-t border-border/40 pt-4">
+          <p className="mb-3 text-[10px] uppercase tracking-widest text-muted">No time set</p>
+          <div className="divide-y divide-border/50">
+            {untimedClasses.map((cls) => (
+              <UntimedClassRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Simple row for classes that have no time — used below the timeline
+function UntimedClassRow({
+  cls,
+  onKnowledge,
+}: {
+  cls: SchoolClass;
+  onKnowledge?: (cls: SchoolClass) => void;
+}) {
+  const hasKnowledge = !!(cls.syllabusText || cls.classNotes || cls.isApCourse);
+  return (
+    <div className="flex items-center gap-3 py-3">
+      <div
+        className="h-2 w-2 shrink-0 rounded-full"
+        style={{ backgroundColor: cls.color ?? "#d4edd9" }}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-sm font-semibold text-foreground">{cls.name}</span>
+          {cls.isApCourse && (
+            <span className="rounded-full bg-accent-amber px-2 py-0.5 text-[10px] font-semibold text-accent-amber-foreground">
+              AP
+            </span>
+          )}
+        </div>
+        <p className="mt-0.5 text-xs text-muted italic">
+          {[cls.teacherName, cls.room].filter(Boolean).join(" · ") || "Time not set"}
+        </p>
+      </div>
+      {onKnowledge && (
+        <button
+          type="button"
+          onClick={() => onKnowledge(cls)}
+          title="Class knowledge"
+          className={`shrink-0 rounded-full p-1 transition-colors hover:bg-surface ${
+            hasKnowledge ? "text-accent-green-foreground" : "text-muted hover:text-foreground"
+          }`}
+        >
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Day-type schedule view ──────────────────────────────────────────────────
 
-// Badge style per day label — extend this map to support more day types
 const DAY_LABEL_STYLE: Record<string, { bg: string; text: string }> = {
   A: { bg: "bg-accent-blue", text: "text-accent-blue-foreground" },
   B: { bg: "bg-accent-purple", text: "text-accent-purple-foreground" },
@@ -573,76 +882,9 @@ function getDayLabelStyle(label: string) {
 }
 
 function sortByStartTime(a: SchoolClass, b: SchoolClass): number {
-  const aTime = a.startTime ?? "00:00";
-  const bTime = b.startTime ?? "00:00";
-  return aTime.localeCompare(bTime);
-}
-
-function ScheduleBlockRow({
-  cls,
-  onKnowledge,
-}: {
-  cls: SchoolClass;
-  onKnowledge?: (cls: SchoolClass) => void;
-}) {
-  const timeStr = cls.startTime
-    ? formatTimeRange(cls.startTime, cls.endTime)
-    : null;
-  const hasKnowledge = !!(cls.syllabusText || cls.classNotes || cls.isApCourse);
-
-  return (
-    <div className="flex items-stretch gap-0 py-3 border-b border-border/50 last:border-0">
-      {/* Left color accent bar */}
-      <div
-        className="mr-3 w-1 shrink-0 rounded-full"
-        style={{ backgroundColor: cls.color ?? "#d4edd9" }}
-      />
-
-      {/* Class info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <span className="text-sm font-semibold text-foreground leading-snug">
-              {cls.name}
-            </span>
-            {cls.isApCourse && (
-              <span className="inline-flex items-center rounded-full bg-accent-amber px-2 py-0.5 text-[10px] font-semibold text-accent-amber-foreground">
-                AP
-              </span>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {timeStr && (
-              <span className="text-sm font-medium text-foreground tabular-nums">
-                {timeStr}
-              </span>
-            )}
-            {onKnowledge && (
-              <button
-                type="button"
-                onClick={() => onKnowledge(cls)}
-                title="Class knowledge"
-                className={`rounded-full p-1 transition-colors hover:bg-surface ${
-                  hasKnowledge ? "text-accent-green-foreground" : "text-muted hover:text-foreground"
-                }`}
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
-          {cls.teacherName && <span>{cls.teacherName}</span>}
-          {cls.teacherName && cls.room && <span>·</span>}
-          {cls.room && <span>{cls.room}</span>}
-          {!timeStr && <span className="italic">Time not set</span>}
-        </div>
-      </div>
-    </div>
-  );
+  const aMin = getClassDisplayTime(a)?.startMin ?? 0;
+  const bMin = getClassDisplayTime(b)?.startMin ?? 0;
+  return aMin - bMin;
 }
 
 type DayLabel = NonNullable<SchoolClass["scheduleLabel"]>;
@@ -654,7 +896,6 @@ function DayTypeScheduleView({
   classes: SchoolClass[];
   onKnowledge?: (cls: SchoolClass) => void;
 }) {
-  // Collect unique day labels dynamically (supports A, B, or any future label)
   const dayLabels: DayLabel[] = Array.from(
     new Set(
       classes
@@ -667,12 +908,11 @@ function DayTypeScheduleView({
   const hasRotation = dayLabels.length > 0;
 
   const [activeTab, setActiveTab] = useState<DayLabel | "">(dayLabels[0] ?? "");
-
-  // If the active tab is no longer in labels (e.g. after data change), reset
-  const effectiveTab: DayLabel | "" = (dayLabels as string[]).includes(activeTab) ? activeTab : dayLabels[0] ?? "";
+  const effectiveTab: DayLabel | "" = (dayLabels as string[]).includes(activeTab)
+    ? activeTab
+    : dayLabels[0] ?? "";
 
   if (!hasRotation) {
-    // No rotation — single schedule view
     return (
       <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
         <div className="flex items-center gap-2 border-b border-border px-5 py-3.5">
@@ -681,20 +921,13 @@ function DayTypeScheduleView({
             {everyday.length} {everyday.length === 1 ? "class" : "classes"}
           </span>
         </div>
-        <div className="px-5">
-          {everyday.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted">No classes yet.</p>
-          ) : (
-            everyday.map((cls) => <ScheduleBlockRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />)
-          )}
-        </div>
+        <ScheduleTimeline classes={everyday} onKnowledge={onKnowledge} />
       </div>
     );
   }
 
   // Rotation exists — tab-based view
   const rotationClasses = [...classes.filter((c) => effectiveTab && c.scheduleLabel === effectiveTab)].sort(sortByStartTime);
-  // Merge rotation + everyday classes into a single sorted timetable for the tab
   const tabClasses = [...rotationClasses, ...everyday].sort(sortByStartTime);
 
   return (
@@ -705,7 +938,6 @@ function DayTypeScheduleView({
           const count = classes.filter((c) => c.scheduleLabel === label).length;
           const isActive = label === effectiveTab;
           const { bg, text } = getDayLabelStyle(label);
-
           return (
             <button
               key={label}
@@ -724,7 +956,7 @@ function DayTypeScheduleView({
               </span>
               {label} Day
               <span className="rounded-full bg-surface px-1.5 py-0.5 text-[10px] text-muted tabular-nums">
-                {count}
+                {count + everyday.length}
               </span>
             </button>
           );
@@ -732,34 +964,16 @@ function DayTypeScheduleView({
       </div>
 
       {/* Tab content */}
-      <div className="px-5">
-        {tabClasses.length === 0 ? (
-          <div className="py-10 text-center">
-            <p className="text-sm text-muted">No classes on {effectiveTab} Day yet.</p>
-            <p className="mt-1 text-xs text-muted">
-              Add classes and label them &ldquo;{effectiveTab}-Day&rdquo; to see them here.
-            </p>
-          </div>
-        ) : (
-          <>
-            {rotationClasses.map((cls) => (
-              <ScheduleBlockRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />
-            ))}
-            {everyday.length > 0 && rotationClasses.length > 0 && (
-              <div className="my-1 flex items-center gap-3">
-                <div className="h-px flex-1 bg-border/40" />
-                <span className="text-[10px] uppercase tracking-widest text-muted/60">
-                  Every day
-                </span>
-                <div className="h-px flex-1 bg-border/40" />
-              </div>
-            )}
-            {everyday.map((cls) => (
-              <ScheduleBlockRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />
-            ))}
-          </>
-        )}
-      </div>
+      {tabClasses.length === 0 ? (
+        <div className="py-10 text-center">
+          <p className="text-sm text-muted">No classes on {effectiveTab} Day yet.</p>
+          <p className="mt-1 text-xs text-muted">
+            Add classes and label them &ldquo;{effectiveTab}-Day&rdquo; to see them here.
+          </p>
+        </div>
+      ) : (
+        <ScheduleTimeline classes={tabClasses} onKnowledge={onKnowledge} />
+      )}
     </div>
   );
 }

@@ -7,6 +7,8 @@ type TaskCardProps = {
   schoolClass?: SchoolClass;
   // Pass true when this card is rendered inside the "overdue" bucket
   isOverdue?: boolean;
+  // Pass true to trigger the fade-out animation before removal
+  isRemoving?: boolean;
   onComplete?: (taskId: string) => void;
   onDelete?: (taskId: string) => void;
 };
@@ -31,7 +33,7 @@ const STATUS_BADGE: Record<string, string> = {
   done: "bg-accent-green text-accent-green-foreground",
 };
 
-export function TaskCard({ task, schoolClass, isOverdue = false, onComplete, onDelete }: TaskCardProps) {
+export function TaskCard({ task, schoolClass, isOverdue = false, isRemoving = false, onComplete, onDelete }: TaskCardProps) {
   const borderColor = TYPE_BORDER[task.type ?? ""] ?? "border-l-accent-green-foreground";
   const typeBadge = TYPE_BADGE[task.type ?? ""] ?? "bg-accent-green text-accent-green-foreground";
   const statusBadge = STATUS_BADGE[task.status] ?? "bg-surface text-muted";
@@ -43,20 +45,29 @@ export function TaskCard({ task, schoolClass, isOverdue = false, onComplete, onD
 
   const isDone = task.status === "done";
 
+  // isRemoving fades the card out smoothly; isDone shows it at reduced opacity as confirmation
+  const opacity = isRemoving ? 0 : isDone ? 0.6 : 1;
+  const transition = isRemoving
+    ? "opacity 0.5s ease, transform 0.5s ease, box-shadow 150ms ease"
+    : "opacity 150ms ease, box-shadow 150ms ease";
+
   return (
     <article
-      className={`group rounded-xl border border-border border-l-4 ${borderColor} bg-card p-4 hover:shadow-md transition-shadow ${isDone ? "opacity-60" : ""}`}
+      className={`group rounded-xl border border-border border-l-4 ${borderColor} bg-card p-4 hover:shadow-md ${
+        isRemoving ? "pointer-events-none" : ""
+      }`}
+      style={{ opacity, transition, transform: isRemoving ? "translateY(-2px)" : undefined }}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex items-start gap-3">
-          {/* Complete checkbox */}
+          {/* Complete checkbox — larger touch target via negative margin + padding */}
           {onComplete && (
             <button
               type="button"
               onClick={() => onComplete(task.id)}
               disabled={isDone}
               title={isDone ? "Already completed" : "Mark as complete"}
-              className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+              className={`-m-1 p-1 mt-[-2px] flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
                 isDone
                   ? "border-accent-green-foreground/50 bg-accent-green/30 text-accent-green-foreground cursor-default"
                   : "border-border hover:border-accent-green-foreground/60 hover:bg-accent-green/10 text-transparent hover:text-accent-green-foreground"
@@ -84,11 +95,16 @@ export function TaskCard({ task, schoolClass, isOverdue = false, onComplete, onD
               Overdue
             </span>
           )}
-          <span
-            className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${statusBadge}`}
-          >
-            {task.status.replace("_", " ")}
-          </span>
+          {task.status === "in_progress" && (
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${statusBadge}`}>
+              In progress
+            </span>
+          )}
+          {task.status === "done" && (
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusBadge}`}>
+              Done ✓
+            </span>
+          )}
           {task.type && (
             <span
               className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${typeBadge}`}
@@ -96,13 +112,13 @@ export function TaskCard({ task, schoolClass, isOverdue = false, onComplete, onD
               {task.type}
             </span>
           )}
-          {/* Delete button */}
+          {/* Delete button — always visible on mobile at reduced opacity, hover-reveal on desktop */}
           {onDelete && (
             <button
               type="button"
               onClick={() => onDelete(task.id)}
               title="Remove task"
-              className="ml-1 flex h-6 w-6 items-center justify-center rounded-lg text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent-rose/10 hover:text-accent-rose-foreground"
+              className="ml-1 flex h-7 w-7 items-center justify-center rounded-lg text-muted opacity-40 transition-opacity group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-accent-rose/10 hover:text-accent-rose-foreground"
             >
               <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

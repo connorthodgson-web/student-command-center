@@ -237,8 +237,15 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
               assistantMessage.content.trimEnd() +
               "\n\n✓ Saved to your [Automations](/automations).";
           } catch {
-            // Don't crash chat if save fails
+            assistantMessage.content =
+              assistantMessage.content.trimEnd() +
+              "\n\n(I ran into an issue saving that reminder — you can add it manually in [Automations](/automations).)";
           }
+        } else {
+          // Automation data was malformed — let the user know
+          assistantMessage.content =
+            assistantMessage.content.trimEnd() +
+            "\n\n(I wasn't able to set that up automatically. Try describing the reminder again or add it in [Automations](/automations).)";
         }
       }
 
@@ -250,7 +257,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
         if (match) {
           completeTask(match.id);
           // Replace the assistant message with a clean confirmation
-          assistantMessage.content = `Done — I marked **${match.title}** as completed.`;
+          assistantMessage.content = `Done — I marked **${match.title}** as complete.`;
         } else if (ambiguous) {
           // Show a disambiguation list — do NOT guess
           const activeTasks = tasks.filter((t) => t.status !== "done");
@@ -265,8 +272,11 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
           const list = candidates.map((t) => `- ${t.title}`).join("\n");
           assistantMessage.content =
             `I found a few tasks that could match — which one did you finish?\n\n${list}`;
+        } else {
+          // No match found — tell the user clearly instead of silently failing
+          const taskLabel = taskTitle ? `"${taskTitle}"` : "that task";
+          assistantMessage.content = `I couldn't find ${taskLabel} in your task list. Can you give me a bit more detail, or check the spelling?`;
         }
-        // If no match and not ambiguous, the assistant's natural reply stands (it may have asked for clarification)
       }
 
       setMessages((current) => [...current.slice(0, -1), assistantMessage]);

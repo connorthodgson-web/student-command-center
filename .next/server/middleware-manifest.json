@@ -3,30 +3,32 @@
   "middleware": {
     "/": {
       "files": [
-        "server/edge-runtime-webpack.js",
-        "server/middleware.js"
+        "server/edge/chunks/node_modules_next_dist_esm_build_templates_edge-wrapper_0a9gg_0.js",
+        "server/edge/chunks/[root-of-the-server]__0ow2x.6._.js",
+        "server/edge/chunks/turbopack-node_modules_next_dist_esm_build_templates_edge-wrapper_0.ftbkv.js"
       ],
       "name": "middleware",
       "page": "/",
+      "entrypoint": "server/edge/chunks/turbopack-node_modules_next_dist_esm_build_templates_edge-wrapper_0.ftbkv.js",
       "matchers": [
         {
-          "regexp": "^(?:\\/(_next\\/data\\/[^/]{1,}))?(?:\\/((?!_next\\/static|_next\\/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*))(\\.json)?[\\/#\\?]?$",
+          "regexp": "^(?:\\/(_next\\/data\\/[^/]{1,}))?(?:\\/((?!_next\\/static|_next\\/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*))(\\\\.json)?[\\/#\\?]?$",
           "originalSource": "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"
         }
       ],
       "wasm": [],
       "assets": [],
       "env": {
-        "__NEXT_BUILD_ID": "VyxK-cMB36S9r97jWOH8Q",
+        "__NEXT_BUILD_ID": "sBHjxz9BgtOnv7zmA3Apn",
         "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY": "/SKvPyc5xD/uNKMVuwwecuBfBT7HKlJiKdtDjrxBDTs=",
-        "__NEXT_PREVIEW_MODE_ID": "f46f5c6c4a01bd3502d1926c41592f0d",
-        "__NEXT_PREVIEW_MODE_ENCRYPTION_KEY": "a6f11e5d02fb4bbc21df8b8d53548b02e271b2dd3e3f5904425172865653189b",
-        "__NEXT_PREVIEW_MODE_SIGNING_KEY": "5ded8faac640d7b1c955359a1e5814c0b5d135c793978e8844b8dd177c850e44"
+        "__NEXT_PREVIEW_MODE_ID": "087d333f8e7b5cda5863d62987069264",
+        "__NEXT_PREVIEW_MODE_ENCRYPTION_KEY": "aadb25d8bbafe8b1e417c1a50fbb6312c61a40f574eb1aca227df5694c46d6f2",
+        "__NEXT_PREVIEW_MODE_SIGNING_KEY": "6f8b60d33d86505761cab597382b8f830f64fcc0fb0380b31e3eef06fdcf279f"
       }
     }
   },
-  "functions": {},
   "sortedMiddleware": [
     "/"
-  ]
+  ],
+  "functions": {}
 }

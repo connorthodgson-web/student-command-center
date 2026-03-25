@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { formatDueDate } from "../lib/datetime";
+import { useCalendar } from "../lib/stores/calendarStore";
 import { useScheduleConfig } from "../lib/stores/scheduleConfig";
+import { getAbOverrideForDate, getTodayDateString } from "../lib/schedule";
 import type {
   ChatMessage,
   ReminderPreference,
@@ -58,6 +60,7 @@ export function AssistantInput({
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   const { todayDayType } = useScheduleConfig();
+  const { entries: calendarEntries } = useCalendar();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,6 +73,10 @@ export function AssistantInput({
     setErrorMessage(null);
 
     try {
+      const todayDateStr = getTodayDateString();
+      const calendarAbOverride = getAbOverrideForDate(calendarEntries, todayDateStr);
+      const effectiveDayType = calendarAbOverride ?? todayDayType;
+
       const res = await fetch("/api/ai/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,7 +85,8 @@ export function AssistantInput({
           tasks,
           classes,
           reminderPreferences,
-          todayDayType,
+          effectiveDayType,
+          calendarEntries,
         }),
       });
 

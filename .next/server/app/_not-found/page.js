@@ -1,1 +1,12 @@
-"use strict";(()=>{var e={};e.id=492,e.ids=[492],e.modules={846:e=>{e.exports=require("next/dist/compiled/next-server/app-page.runtime.prod.js")},1973:(e,r,n)=>{n.r(r),n.d(r,{GlobalError:()=>d.a,__next_app__:()=>u,pages:()=>l,routeModule:()=>x,tree:()=>p});var t=n(5239),o=n(8088),s=n(8170),d=n.n(s),i=n(893),a={};for(let e in i)0>["default","tree","pages","GlobalError","__next_app__","routeModule"].indexOf(e)&&(a[e]=()=>i[e]);n.d(r,a);let p={children:["",{children:["/_not-found",{children:["__PAGE__",{},{page:[()=>Promise.resolve().then(n.t.bind(n,7398,23)),"next/dist/client/components/not-found-error"]}]},{}]},{layout:[()=>Promise.resolve().then(n.bind(n,8014)),"C:\\Users\\conno\\Downloads\\student-command-center\\app\\layout.tsx"],"not-found":[()=>Promise.resolve().then(n.t.bind(n,7398,23)),"next/dist/client/components/not-found-error"],forbidden:[()=>Promise.resolve().then(n.t.bind(n,9999,23)),"next/dist/client/components/forbidden-error"],unauthorized:[()=>Promise.resolve().then(n.t.bind(n,5284,23)),"next/dist/client/components/unauthorized-error"]}]}.children,l=[],u={require:n,loadChunk:()=>Promise.resolve()},x=new t.AppPageRouteModule({definition:{kind:o.RouteKind.APP_PAGE,page:"/_not-found/page",pathname:"/_not-found",bundlePath:"",filename:"",appPaths:[]},userland:{loaderTree:p}})},3033:e=>{e.exports=require("next/dist/server/app-render/work-unit-async-storage.external.js")},3295:e=>{e.exports=require("next/dist/server/app-render/after-task-async-storage.external.js")},3873:e=>{e.exports=require("path")},9121:e=>{e.exports=require("next/dist/server/app-render/action-async-storage.external.js")},9294:e=>{e.exports=require("next/dist/server/app-render/work-async-storage.external.js")}};var r=require("../../webpack-runtime.js");r.C(e);var n=e=>r(r.s=e),t=r.X(0,[447,134,28],()=>n(1973));module.exports=t})();
+var R=require("../../chunks/ssr/[turbopack]_runtime.js")("server/app/_not-found/page.js")
+R.c("server/chunks/ssr/[root-of-the-server]__0.zquoa._.js")
+R.c("server/chunks/ssr/node_modules_next_dist_esm_build_templates_app-page_0m-ur85.js")
+R.c("server/chunks/ssr/[root-of-the-server]__06wba2r._.js")
+R.c("server/chunks/ssr/node_modules_next_dist_06hehg4._.js")
+R.c("server/chunks/ssr/_0c32qw5._.js")
+R.c("server/chunks/ssr/node_modules_next_dist_client_components_0inhx6q._.js")
+R.c("server/chunks/ssr/node_modules_next_dist_client_components_builtin_forbidden_0ghu-f7.js")
+R.c("server/chunks/ssr/node_modules_next_dist_client_components_builtin_unauthorized_0cjv-23.js")
+R.c("server/chunks/ssr/_next-internal_server_app__not-found_page_actions_0eq97pa.js")
+R.m(54081)
+module.exports=R.m(54081).exports

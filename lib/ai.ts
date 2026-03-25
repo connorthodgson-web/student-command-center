@@ -1,7 +1,7 @@
 // UI redesign pass
 import OpenAI from "openai";
-import type { ChatMessage, ReminderPreference, SchoolClass, StudentTask } from "../types";
-import { getEffectiveDays } from "./schedule";
+import type { ChatMessage, ReminderPreference, SchoolCalendarEntry, SchoolClass, StudentTask } from "../types";
+import { buildCalendarContext, getEffectiveDays } from "./schedule";
 
 const client = new OpenAI(); // Reads OPENAI_API_KEY from environment automatically
 
@@ -135,9 +135,11 @@ export async function answerWorkloadQuestion(
   tasks: StudentTask[],
   classes: SchoolClass[],
   reminderPreferences: ReminderPreference,
-  todayDayType?: "A" | "B" | null
+  effectiveDayType?: "A" | "B" | null,
+  calendarEntries?: SchoolCalendarEntry[]
 ): Promise<ChatMessage> {
   const today = new Date();
+  const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const readableDate = today.toLocaleDateString("en-US", {
     weekday: "long",
     year: "numeric",
@@ -149,10 +151,11 @@ export async function answerWorkloadQuestion(
     minute: "2-digit",
   });
 
-  const dayTypeNote =
-    todayDayType
-      ? `Today is an **${todayDayType}-Day** (rotating schedule).`
-      : "The student has not indicated whether today is an A-Day or B-Day.";
+  const calendarSection = buildCalendarContext(
+    calendarEntries ?? [],
+    todayDateStr,
+    effectiveDayType ?? null
+  );
 
   // Build class schedule lines with per-day meeting detail and A/B labels
   const classLines = classes
@@ -203,7 +206,10 @@ export async function answerWorkloadQuestion(
     ? `* Due soon reminders: enabled, ${reminderPreferences.dueSoonHoursBefore ?? 0} hours before`
     : "* Due soon reminders: disabled";
 
-  const systemPrompt = `You are a helpful AI academic assistant for a student. Today is ${readableDate} at ${readableTime}. ${dayTypeNote}
+  const systemPrompt = `You are a calm, smart academic assistant built into a student planner app. Today is ${readableDate} at ${readableTime}.
+
+School calendar context:
+${calendarSection}
 
 The student's classes are:
 ${classLines || "No classes on record."}
@@ -216,7 +222,23 @@ ${dailySummaryLine}
 ${tonightSummaryLine}
 ${dueSoonLine}
 
-Answer the student's questions about their workload, schedule, and upcoming deadlines in a helpful, honest, and conversational way. Keep responses concise and direct — students prefer short answers. Do not invent information not in the context above. If you are unsure, say so.`;
+## Response style rules (follow these carefully):
+
+1. **Start with a short direct answer or summary** — one or two sentences max. Get to the point immediately.
+2. **Then add organized details** if the question warrants it — use short bullet lines starting with "- " for lists.
+3. **Bold important things** using **markdown bold** — class names, due dates, day labels, key deadlines.
+4. **Adapt length to the question** — simple yes/no questions get a short focused reply; weekly overview questions get a clean grouped summary.
+5. **Use section headings sparingly** — only for grouped, multi-day, or multi-part answers. Use "### Monday" or "### This Week" style headings to separate day groups or major sections. Do NOT use headings for simple one-part answers.
+6. **Use 1–3 relevant emojis** per response, placed naturally (not at the start of every line). Good use: a calendar emoji near a date, a checkmark near completed items. Do not overuse.
+7. **Sound student-friendly and supportive** — not robotic, not generic productivity-speak. Be calm and direct.
+8. **Never invent information** not in the context above. If unsure, say so briefly.
+9. **Keep bullet points short** — one idea per line, no long run-on bullets.
+
+Examples of good response patterns:
+- "Do I have school Friday?" → one sentence answer, no heading needed
+- "What do I have this week?" → brief intro line, then ### Monday / ### Tuesday etc. with bullets under each
+- "What should I work on tonight?" → maybe a ### Tonight heading if listing multiple things, otherwise just bullets
+- "Do I have any tests soon?" → direct answer, then list only if there are items to list`;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",

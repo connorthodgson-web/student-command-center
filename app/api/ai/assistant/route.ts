@@ -5,7 +5,7 @@ import {
   parseNaturalLanguageSchedule,
   answerWorkloadQuestion,
 } from "../../../../lib/ai";
-import type { ReminderPreference, SchoolClass, StudentTask } from "../../../../types";
+import type { ReminderPreference, SchoolCalendarEntry, SchoolClass, StudentTask } from "../../../../types";
 
 const client = new OpenAI(); // Reads OPENAI_API_KEY from environment automatically
 
@@ -15,14 +15,15 @@ export async function POST(request: Request) {
     tasks?: StudentTask[];
     classes?: SchoolClass[];
     reminderPreferences?: ReminderPreference;
-    todayDayType?: "A" | "B" | null;
+    effectiveDayType?: "A" | "B" | null;
+    calendarEntries?: SchoolCalendarEntry[];
   };
 
   if (!body.message) {
     return NextResponse.json({ error: "Message is required." }, { status: 400 });
   }
 
-  const { message, tasks = [], classes = [], todayDayType } = body;
+  const { message, tasks = [], classes = [], effectiveDayType, calendarEntries } = body;
   const reminderPreferences: ReminderPreference = body.reminderPreferences ?? {
     id: "default",
     dailySummaryEnabled: false,
@@ -77,7 +78,8 @@ Return ONLY a JSON object: { "intent": "setup_schedule" } or { "intent": "add_ta
         tasks,
         classes,
         reminderPreferences,
-        todayDayType
+        effectiveDayType,
+        calendarEntries
       );
       return NextResponse.json({ intent: "chat", reply });
     }

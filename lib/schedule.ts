@@ -1,5 +1,5 @@
 // UI redesign pass
-import type { ClassMeetingTime, SchoolClass, Weekday } from "../types";
+import type { ClassMeetingTime, SchoolCalendarEntry, SchoolClass, Weekday } from "../types";
 
 const weekdayLabels: Record<Weekday, string> = {
   monday: "Mon",
@@ -155,4 +155,109 @@ function formatTime(value: string) {
   const suffix = hours >= 12 ? "PM" : "AM";
   const normalizedHours = hours % 12 || 12;
   return `${normalizedHours}:${minutes.toString().padStart(2, "0")} ${suffix}`;
+}
+
+// ─── School Calendar Helpers ───────────────────────────────────────────────
+
+/**
+ * Returns today's date as a YYYY-MM-DD string (local time).
+ * Safe to call client-side only.
+ */
+export function getTodayDateString(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Returns the SchoolCalendarEntry for the given YYYY-MM-DD date, if any.
+ */
+export function getCalendarEntryForDate(
+  entries: SchoolCalendarEntry[],
+  dateStr: string
+): SchoolCalendarEntry | undefined {
+  return entries.find((e) => e.date === dateStr);
+}
+
+/**
+ * Returns true when the date is a no-school day (no_school, holiday, or teacher_workday).
+ * On such days, no regular class schedule should be shown.
+ */
+export function isNoSchoolDay(entries: SchoolCalendarEntry[], dateStr: string): boolean {
+  const entry = getCalendarEntryForDate(entries, dateStr);
+  if (!entry) return false;
+  return (
+    entry.category === "no_school" ||
+    entry.category === "holiday" ||
+    entry.category === "teacher_workday"
+  );
+}
+
+/**
+ * Returns the A/B day override from the calendar for the given date, or null.
+ * When set, this should take priority over the user's manual day-type selection.
+ */
+export function getAbOverrideForDate(
+  entries: SchoolCalendarEntry[],
+  dateStr: string
+): "A" | "B" | null {
+  const entry = getCalendarEntryForDate(entries, dateStr);
+  return entry?.abOverride ?? null;
+}
+
+/**
+ * Builds a human-readable calendar context block for AI system prompts.
+ * Describes today's school day status and lists upcoming special days.
+ */
+export function buildCalendarContext(
+  entries: SchoolCalendarEntry[],
+  todayDateStr: string,
+  effectiveDayType: "A" | "B" | null
+): string {
+  const todayEntry = getCalendarEntryForDate(entries, todayDateStr);
+  const noSchoolToday =
+    todayEntry?.category === "no_school" ||
+    todayEntry?.category === "holiday" ||
+    todayEntry?.category === "teacher_workday";
+
+  let todayLine: string;
+  if (noSchoolToday && todayEntry) {
+    const categoryLabel = todayEntry.category.replace(/_/g, " ");
+    const namedLabel = todayEntry.label ? ` — "${todayEntry.label}"` : "";
+    todayLine = `TODAY: NO SCHOOL (${categoryLabel}${namedLabel}). The student does NOT have classes today.`;
+  } else if (effectiveDayType) {
+    const calendarNote = todayEntry?.abOverride ? " (set by calendar)" : "";
+    todayLine = `TODAY: School day, ${effectiveDayType}-Day${calendarNote}.`;
+  } else {
+    todayLine = "TODAY: School day. A/B day type not set.";
+  }
+
+  // Collect special days in the next 7 days (excluding today)
+  const upcoming: string[] = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(todayDateStr + "T12:00:00"); // noon avoids DST edge cases
+    d.setDate(d.getDate() + i);
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const entry = entries.find((e) => e.date === dateStr);
+    if (entry) {
+      const readable = d.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+      const categoryLabel = entry.category.replace(/_/g, " ");
+      const namedLabel = entry.label ? ` — "${entry.label}"` : "";
+      const abNote = entry.abOverride ? ` [${entry.abOverride}-Day]` : "";
+      upcoming.push(`  • ${readable}: ${categoryLabel}${namedLabel}${abNote}`);
+    }
+  }
+
+  const upcomingText =
+    upcoming.length > 0
+      ? `Upcoming special days (next 7 days):\n${upcoming.join("\n")}`
+      : "No special days scheduled in the next 7 days.";
+
+  return `${todayLine}\n${upcomingText}`;
 }

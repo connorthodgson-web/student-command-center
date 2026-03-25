@@ -1,8 +1,10 @@
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 export type DayType = "A" | "B" | null;
+
+const STORAGE_KEY = "scc_day_type_v1";
 
 type ScheduleConfigContextValue = {
   /** Whether today is an A-day, B-day, or not set (null = standard/unknown). */
@@ -13,7 +15,32 @@ type ScheduleConfigContextValue = {
 const ScheduleConfigContext = createContext<ScheduleConfigContextValue | null>(null);
 
 export function ScheduleConfigProvider({ children }: { children: React.ReactNode }) {
-  const [todayDayType, setTodayDayType] = useState<DayType>(null);
+  const [todayDayType, setTodayDayTypeState] = useState<DayType>(null);
+
+  // Hydrate from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored === "A" || stored === "B") {
+        setTodayDayTypeState(stored);
+      }
+    } catch {
+      // Silently ignore storage errors
+    }
+  }, []);
+
+  const setTodayDayType = (type: DayType) => {
+    setTodayDayTypeState(type);
+    try {
+      if (type === null) {
+        localStorage.removeItem(STORAGE_KEY);
+      } else {
+        localStorage.setItem(STORAGE_KEY, type);
+      }
+    } catch {
+      // Silently ignore storage errors
+    }
+  };
 
   return (
     <ScheduleConfigContext.Provider value={{ todayDayType, setTodayDayType }}>

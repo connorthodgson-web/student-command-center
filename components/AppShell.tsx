@@ -12,6 +12,8 @@ const NAV_LINKS = [
   { href: "/chat", label: "Assistant", icon: "✦" },
   { href: "/tasks", label: "Tasks", icon: "✓" },
   { href: "/classes", label: "Classes", icon: "◈" },
+  { href: "/calendar", label: "Calendar", icon: "◫" },
+  { href: "/automations", label: "Automations", icon: "◉" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 

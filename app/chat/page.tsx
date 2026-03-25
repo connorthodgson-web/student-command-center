@@ -1,7 +1,15 @@
 // UI redesign pass
 import { ChatPanel } from "../../components/ChatPanel";
 
-export default function ChatPage() {
+export default async function ChatPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const params = await searchParams;
+  const initialQuery =
+    typeof params?.q === "string" ? params.q.slice(0, 500) : undefined;
+
   return (
     // Full viewport height — the chat panel owns the scroll, not the page
     <main className="flex h-screen flex-col overflow-hidden">
@@ -28,7 +36,7 @@ export default function ChatPage() {
       {/* Chat area — fills remaining height */}
       <div className="flex flex-1 overflow-hidden">
         <div className="mx-auto flex w-full max-w-4xl flex-col px-6">
-          <ChatPanel />
+          <ChatPanel initialQuery={initialQuery} />
         </div>
       </div>
     </main>

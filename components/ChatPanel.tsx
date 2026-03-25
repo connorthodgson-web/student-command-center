@@ -1,21 +1,33 @@
 // UI redesign pass
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { mockChatMessages } from "../lib/mock-data";
 import { useTaskStore } from "../lib/task-store";
 import { useReminderStore } from "../lib/reminder-store";
 import { useClasses } from "../lib/stores/classStore";
-import type { ChatMessage } from "../types";
+import { useCalendar } from "../lib/stores/calendarStore";
+import { useScheduleConfig } from "../lib/stores/scheduleConfig";
+import { useAutomations } from "../lib/stores/automationStore";
+import { getAbOverrideForDate, getTodayDateString } from "../lib/schedule";
+import type { AssistantAction, ChatMessage } from "../types";
 
-export function ChatPanel() {
+export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>(mockChatMessages);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const { tasks } = useTaskStore();
   const { preferences: reminderPreferences } = useReminderStore();
   const { classes } = useClasses();
+  const { entries: calendarEntries } = useCalendar();
+  const { todayDayType } = useScheduleConfig();
+  const { addAutomation } = useAutomations();
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Pre-fill input from ?q= deep-link (e.g. from Automations page example chips)
+  useEffect(() => {
+    if (initialQuery) setInput(initialQuery);
+  }, [initialQuery]);
 
   // Auto-scroll to the newest message whenever messages change
   useEffect(() => {
@@ -51,6 +63,9 @@ export function ChatPanel() {
 
     try {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
+      const todayDateStr = getTodayDateString();
+      const calendarAbOverride = getAbOverrideForDate(calendarEntries, todayDateStr);
+      const effectiveDayType = calendarAbOverride ?? todayDayType;
 
       const response = await fetch("/api/ai/chat", {
         method: "POST",
@@ -62,10 +77,12 @@ export function ChatPanel() {
           reminderPreferences,
           classes,
           currentDatetime: new Date().toISOString(),
+          calendarEntries,
+          effectiveDayType,
         }),
       });
 
-      const json = (await response.json()) as { data?: ChatMessage; error?: string };
+      const json = (await response.json()) as { data?: ChatMessage; action?: AssistantAction; error?: string };
 
       const assistantMessage: ChatMessage = json.data ?? {
         id: `assistant-${Date.now()}`,
@@ -73,6 +90,32 @@ export function ChatPanel() {
         content: "Something went wrong. Please try again.",
         createdAt: new Date().toISOString(),
       };
+
+      // Handle automation creation action — validate before saving to prevent corrupt state
+      if (json.action?.type === "create_automation") {
+        const auto = json.action.automation;
+        const isValid =
+          auto &&
+          typeof auto.type === "string" &&
+          typeof auto.title === "string" &&
+          auto.title.trim().length > 0 &&
+          typeof auto.scheduleDescription === "string" &&
+          auto.scheduleDescription.trim().length > 0 &&
+          typeof auto.scheduleConfig === "object" &&
+          auto.scheduleConfig !== null &&
+          typeof auto.enabled === "boolean" &&
+          typeof auto.deliveryChannel === "string";
+        if (isValid) {
+          try {
+            addAutomation(auto);
+            assistantMessage.content =
+              assistantMessage.content.trimEnd() +
+              "\n\n✓ Saved to your [Automations](/automations).";
+          } catch {
+            // Don't crash the chat if saving fails — message still renders
+          }
+        }
+      }
 
       setMessages((current) => [...current.slice(0, -1), assistantMessage]);
     } catch {
@@ -146,6 +189,90 @@ export function ChatPanel() {
   );
 }
 
+// ── Minimal markdown renderer ────────────────────────────────────
+// Handles: **bold**, bullet lines (- or *), paragraph spacing.
+// No external library needed for this scope.
+function renderContent(text: string): React.ReactNode {
+  const lines = text.split("\n");
+  const nodes: React.ReactNode[] = [];
+  let bulletBuffer: string[] = [];
+  let key = 0;
+
+  const flushBullets = () => {
+    if (bulletBuffer.length === 0) return;
+    nodes.push(
+      <ul key={key++} className="mt-1 mb-1 space-y-0.5 pl-1">
+        {bulletBuffer.map((b, i) => (
+          <li key={i} className="flex items-start gap-2 leading-snug">
+            <span className="mt-[3px] shrink-0 text-[10px] text-muted">●</span>
+            <span>{renderInline(b)}</span>
+          </li>
+        ))}
+      </ul>
+    );
+    bulletBuffer = [];
+  };
+
+  for (const line of lines) {
+    // ### Section heading
+    const headingMatch = line.match(/^###\s+(.+)/);
+    if (headingMatch) {
+      flushBullets();
+      nodes.push(
+        <p key={key++} className="mt-3 mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          {headingMatch[1]}
+        </p>
+      );
+      continue;
+    }
+
+    // Standalone bold-only line like **Tonight** used as a section label
+    const standaloneBoldMatch = line.match(/^\*\*([^*]+)\*\*\s*$/);
+    if (standaloneBoldMatch) {
+      flushBullets();
+      nodes.push(
+        <p key={key++} className="mt-3 mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+          {standaloneBoldMatch[1]}
+        </p>
+      );
+      continue;
+    }
+
+    const bulletMatch = line.match(/^[-*]\s+(.+)/);
+    if (bulletMatch) {
+      bulletBuffer.push(bulletMatch[1]);
+      continue;
+    }
+    flushBullets();
+    if (line.trim() === "") {
+      nodes.push(<div key={key++} className="h-2" />);
+    } else {
+      nodes.push(
+        <p key={key++} className="leading-relaxed">
+          {renderInline(line)}
+        </p>
+      );
+    }
+  }
+  flushBullets();
+  return <>{nodes}</>;
+}
+
+function renderInline(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <>
+      {parts.map((part, i) => {
+        const boldMatch = part.match(/^\*\*([^*]+)\*\*$/);
+        if (boldMatch) {
+          return <strong key={i} className="font-semibold text-foreground">{boldMatch[1]}</strong>;
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </>
+  );
+}
+
 // ── Message bubble sub-component ────────────────────────────────
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
@@ -168,7 +295,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         ✦
       </div>
       <div
-        className={`max-w-[78%] rounded-2xl rounded-bl-sm border border-border bg-card px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm ${
+        className={`max-w-[78%] rounded-2xl rounded-bl-sm border border-border bg-card px-4 py-3 text-sm text-foreground shadow-sm ${
           isLoading ? "opacity-60" : ""
         }`}
       >
@@ -179,7 +306,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted [animation-delay:300ms]" />
           </span>
         ) : (
-          <span className="whitespace-pre-wrap">{message.content}</span>
+          renderContent(message.content)
         )}
       </div>
     </div>

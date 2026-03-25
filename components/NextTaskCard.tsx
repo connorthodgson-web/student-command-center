@@ -56,8 +56,11 @@ export function NextTaskCard({ task, schoolClass }: NextTaskCardProps) {
           </button>
         </div>
       ) : (
-        <div className="mt-4 rounded-xl border border-dashed border-border bg-background p-4 text-sm text-muted">
-          No incomplete tasks yet. Once tasks exist, this card will point to a reasonable next step.
+        <div className="mt-4 rounded-xl border border-dashed border-border bg-background p-5 text-center">
+          <p className="text-sm font-medium text-foreground/60">You&apos;re all caught up.</p>
+          <p className="mt-1 text-xs text-muted">
+            Tell the assistant about a new assignment or test to get started.
+          </p>
         </div>
       )}
     </section>

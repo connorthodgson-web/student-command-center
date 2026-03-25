@@ -1,0 +1,87 @@
+import { NextResponse } from "next/server";
+import OpenAI from "openai";
+import {
+  parseNaturalLanguageTask,
+  parseNaturalLanguageSchedule,
+  answerWorkloadQuestion,
+} from "../../../../lib/ai";
+import type { ReminderPreference, SchoolClass, StudentTask } from "../../../../types";
+
+const client = new OpenAI(); // Reads OPENAI_API_KEY from environment automatically
+
+export async function POST(request: Request) {
+  const body = (await request.json()) as {
+    message?: string;
+    tasks?: StudentTask[];
+    classes?: SchoolClass[];
+    reminderPreferences?: ReminderPreference;
+    todayDayType?: "A" | "B" | null;
+  };
+
+  if (!body.message) {
+    return NextResponse.json({ error: "Message is required." }, { status: 400 });
+  }
+
+  const { message, tasks = [], classes = [], todayDayType } = body;
+  const reminderPreferences: ReminderPreference = body.reminderPreferences ?? {
+    id: "default",
+    dailySummaryEnabled: false,
+    tonightSummaryEnabled: false,
+    dueSoonRemindersEnabled: false,
+  };
+
+  // Step 1: Classify the message intent with a short dedicated call.
+  let intent: "add_task" | "setup_schedule" | "chat" = "chat";
+  try {
+    const classifyResponse = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 50,
+      messages: [
+        {
+          role: "system",
+          content: `You are a classifier for a student assistant app. Given a student's message, decide whether it is:
+- setup_schedule: the student is describing their full class schedule, listing multiple classes, or asking the app to build their schedule from a description (e.g. "my A-day classes are...", "I have English at 8, Math at 10...", "set up my schedule")
+- add_task: the student is describing something they need to do, have due, or want to remember
+- chat: the student is asking a question, asking about their workload, asking what to work on, or having a general conversation
+Return ONLY a JSON object: { "intent": "setup_schedule" } or { "intent": "add_task" } or { "intent": "chat" }. No other text.`,
+        },
+        { role: "user", content: message },
+      ],
+    });
+
+    const raw = classifyResponse.choices[0].message.content?.trim() ?? "";
+    const jsonText = raw.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    const parsed = JSON.parse(jsonText) as { intent: string };
+    if (
+      parsed.intent === "add_task" ||
+      parsed.intent === "setup_schedule" ||
+      parsed.intent === "chat"
+    ) {
+      intent = parsed.intent;
+    }
+  } catch {
+    // Classification failed — default to chat so the student still gets a response.
+    intent = "chat";
+  }
+
+  try {
+    if (intent === "setup_schedule") {
+      const parsedClasses = await parseNaturalLanguageSchedule(message);
+      return NextResponse.json({ intent: "setup_schedule", classes: parsedClasses });
+    } else if (intent === "add_task") {
+      const task = await parseNaturalLanguageTask(message, classes);
+      return NextResponse.json({ intent: "add_task", task });
+    } else {
+      const reply = await answerWorkloadQuestion(
+        message,
+        tasks,
+        classes,
+        reminderPreferences,
+        todayDayType
+      );
+      return NextResponse.json({ intent: "chat", reply });
+    }
+  } catch {
+    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
+  }
+}

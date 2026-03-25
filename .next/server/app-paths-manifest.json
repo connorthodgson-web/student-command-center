@@ -1,0 +1,17 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/classes/route": "app/api/classes/route.js",
+  "/api/ai/assistant/route": "app/api/ai/assistant/route.js",
+  "/api/ai/chat/route": "app/api/ai/chat/route.js",
+  "/api/reminders/route": "app/api/reminders/route.js",
+  "/api/tasks/route": "app/api/tasks/route.js",
+  "/api/ai/parse-task/route": "app/api/ai/parse-task/route.js",
+  "/classes/page": "app/classes/page.js",
+  "/chat/page": "app/chat/page.js",
+  "/settings/page": "app/settings/page.js",
+  "/auth/login/page": "app/auth/login/page.js",
+  "/page": "app/page.js",
+  "/tasks/page": "app/tasks/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/dev/parse-test/page": "app/dev/parse-test/page.js"
+}

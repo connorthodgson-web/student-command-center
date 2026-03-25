@@ -1,0 +1,17 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/api/classes/route": "/api/classes",
+  "/api/ai/assistant/route": "/api/ai/assistant",
+  "/api/ai/chat/route": "/api/ai/chat",
+  "/api/reminders/route": "/api/reminders",
+  "/api/tasks/route": "/api/tasks",
+  "/api/ai/parse-task/route": "/api/ai/parse-task",
+  "/classes/page": "/classes",
+  "/chat/page": "/chat",
+  "/settings/page": "/settings",
+  "/auth/login/page": "/auth/login",
+  "/page": "/",
+  "/tasks/page": "/tasks",
+  "/dashboard/page": "/dashboard",
+  "/dev/parse-test/page": "/dev/parse-test"
+}

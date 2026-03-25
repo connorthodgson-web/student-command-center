@@ -1,51 +1,135 @@
 "use client";
 
-// TODO: Replace this in-memory store with Supabase-backed persistence once auth is wired up.
-// TODO: Replace with Supabase-backed class persistence in a future sprint.
-
-import { createContext, useContext, useState } from "react";
-import { mockClasses } from "../mock-data";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useAuth } from "../auth-context";
+import type { ClassInsert, ClassUpdate } from "../classes";
 import type { SchoolClass } from "../../types";
 
 type ClassStoreContextValue = {
   classes: SchoolClass[];
-  addClass: (schoolClass: Omit<SchoolClass, "id">) => void;
-  addClasses: (schoolClasses: Omit<SchoolClass, "id">[]) => void;
-  updateClass: (id: string, updates: Partial<SchoolClass>) => void;
-  deleteClass: (id: string) => void;
+  loading: boolean;
+  addClass: (schoolClass: ClassInsert) => Promise<void>;
+  addClasses: (schoolClasses: ClassInsert[]) => Promise<void>;
+  updateClass: (id: string, updates: ClassUpdate) => Promise<void>;
+  deleteClass: (id: string) => Promise<void>;
 };
 
 const ClassStoreContext = createContext<ClassStoreContextValue | null>(null);
 
 export function ClassStoreProvider({ children }: { children: React.ReactNode }) {
-  // Initialize with mockClasses so existing class data is visible immediately
-  const [classes, setClasses] = useState<SchoolClass[]>(mockClasses);
+  const { user, loading: authLoading } = useAuth();
+  const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const addClass = (schoolClass: Omit<SchoolClass, "id">) => {
-    const newClass: SchoolClass = {
-      ...schoolClass,
-      id: crypto.randomUUID(),
-    };
-    setClasses((prev) => [...prev, newClass]);
-  };
+  const loadClasses = useCallback(async () => {
+    if (!user) {
+      setClasses([]);
+      setLoading(false);
+      return;
+    }
 
-  const addClasses = (schoolClasses: Omit<SchoolClass, "id">[]) => {
-    const withIds = schoolClasses.map((c) => ({ ...c, id: crypto.randomUUID() }));
-    setClasses((prev) => [...prev, ...withIds]);
-  };
+    setLoading(true);
 
-  const updateClass = (id: string, updates: Partial<SchoolClass>) => {
-    setClasses((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
-    );
-  };
+    try {
+      const response = await fetch("/api/classes", { cache: "no-store" });
+      const json = (await response.json()) as { data?: SchoolClass[]; error?: string };
 
-  const deleteClass = (id: string) => {
+      if (!response.ok) {
+        throw new Error(json.error ?? "Failed to load classes.");
+      }
+
+      setClasses(json.data ?? []);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    void loadClasses();
+  }, [authLoading, loadClasses]);
+
+  const addClass = useCallback(async (schoolClass: ClassInsert) => {
+    const response = await fetch("/api/classes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classes: [schoolClass] }),
+    });
+    const json = (await response.json()) as { data?: SchoolClass[]; error?: string };
+
+    if (!response.ok) {
+      throw new Error(json.error ?? "Failed to save class.");
+    }
+
+    const createdClass = json.data?.[0];
+    if (createdClass) {
+      setClasses((prev) => [...prev, createdClass]);
+    }
+  }, []);
+
+  const addClasses = useCallback(async (schoolClasses: ClassInsert[]) => {
+    const response = await fetch("/api/classes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classes: schoolClasses }),
+    });
+    const json = (await response.json()) as { data?: SchoolClass[]; error?: string };
+
+    if (!response.ok) {
+      throw new Error(json.error ?? "Failed to save classes.");
+    }
+
+    const createdClasses = json.data ?? [];
+    if (createdClasses.length > 0) {
+      setClasses((prev) => [...prev, ...createdClasses]);
+    }
+  }, []);
+
+  const updateClass = useCallback(async (id: string, updates: ClassUpdate) => {
+    const response = await fetch("/api/classes", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, updates }),
+    });
+    const json = (await response.json()) as { data?: SchoolClass; error?: string };
+
+    if (!response.ok || !json.data) {
+      throw new Error(json.error ?? "Failed to update class.");
+    }
+
+    const updatedClass = json.data;
+    setClasses((prev) => prev.map((c) => (c.id === id ? updatedClass : c)));
+  }, []);
+
+  const deleteClass = useCallback(async (id: string) => {
+    const response = await fetch("/api/classes", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    const json = (await response.json()) as { error?: string };
+
+    if (!response.ok) {
+      throw new Error(json.error ?? "Failed to delete class.");
+    }
+
     setClasses((prev) => prev.filter((c) => c.id !== id));
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ classes, loading, addClass, addClasses, updateClass, deleteClass }),
+    [classes, loading, addClass, addClasses, updateClass, deleteClass]
+  );
 
   return (
-    <ClassStoreContext.Provider value={{ classes, addClass, addClasses, updateClass, deleteClass }}>
+    <ClassStoreContext.Provider value={value}>
       {children}
     </ClassStoreContext.Provider>
   );

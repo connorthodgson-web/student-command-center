@@ -17,7 +17,7 @@ type Status = "idle" | "loading" | "preview" | "error";
 
 type Props = {
   existingClasses: SchoolClass[];
-  onConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => void;
+  onConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => Promise<void> | void;
   onCancel?: () => void;
 };
 
@@ -30,6 +30,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
   const [status, setStatus] = useState<Status>("idle");
   const [editableSchedule, setEditableSchedule] = useState<Array<Omit<SchoolClass, "id">> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +69,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
         const parsed = (json as Extract<AssistantResponse, { intent: "setup_schedule" }>).classes;
         if (parsed.length === 0) {
           setErrorMessage(
-            'Couldn\'t find any classes in that description. Try something like: "AP Chem Mon/Wed/Fri 9–9:50, English Lit A-Day 10–11, History Tue/Thu 2–3:15."'
+            'Couldn\'t find any classes in that description. Try something like: "AP Chem Mon/Wed/Fri 9-9:50, English Lit A-Day 10-11, History Tue/Thu 2-3:15."'
           );
           setStatus("error");
         } else {
@@ -77,7 +78,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
         }
       } else {
         setErrorMessage(
-          'Try describing your full class schedule — e.g. "AP Chem Mon/Wed/Fri 9–9:50, English Lit A-Day 10–11, History Tue/Thu 2–3:15."'
+          'Try describing your full class schedule, for example: "AP Chem Mon/Wed/Fri 9-9:50, English Lit A-Day 10-11, History Tue/Thu 2-3:15."'
         );
         setStatus("error");
       }
@@ -106,20 +107,29 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
     setEditableSchedule((prev) => prev?.filter((_, idx) => idx !== i) ?? null);
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!editableSchedule) return;
-    onConfirmed(editableSchedule);
-    setEditableSchedule(null);
-    setInput("");
-    setStatus("idle");
+    setErrorMessage(null);
+    setIsSaving(true);
+
+    try {
+      await onConfirmed(editableSchedule);
+      setEditableSchedule(null);
+      setInput("");
+      setStatus("idle");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to save classes.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleBack = () => {
     setEditableSchedule(null);
     setStatus("idle");
+    setErrorMessage(null);
   };
 
-  // ── Input / error state ──────────────────────────────────────────────────
   if (status !== "preview") {
     return (
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -132,7 +142,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
               void handleSubmit(e as unknown as React.FormEvent);
             }
           }}
-          placeholder={`Describe your full schedule in plain English.\n\nExample: "AP Chem Mon/Wed/Fri 9–9:50, English Lit A-Day 10–11:15, History Tue/Thu 2–3:15, PE every day 12–12:45"`}
+          placeholder={`Describe your full schedule in plain English.\n\nExample: "AP Chem Mon/Wed/Fri 9-9:50, English Lit A-Day 10-11:15, History Tue/Thu 2-3:15, PE every day 12-12:45"`}
           rows={4}
           disabled={status === "loading"}
           className="w-full resize-none rounded-xl border border-border bg-surface px-4 py-3.5 text-sm text-foreground placeholder:text-muted outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40 disabled:opacity-60"
@@ -150,18 +160,18 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
             disabled={status === "loading" || !input.trim()}
             className="rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-40"
           >
-            {status === "loading" ? "Parsing schedule…" : "Build schedule"}
+            {status === "loading" ? "Parsing schedule..." : "Build schedule"}
           </button>
           {onCancel && (
             <button
               type="button"
               onClick={onCancel}
-              className="text-sm text-muted hover:text-foreground transition"
+              className="text-sm text-muted transition hover:text-foreground"
             >
               Cancel
             </button>
           )}
-          <p className="ml-auto text-xs text-muted hidden sm:block">
+          <p className="ml-auto hidden text-xs text-muted sm:block">
             Enter to submit · Shift+Enter for new line
           </p>
         </div>
@@ -169,13 +179,12 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
     );
   }
 
-  // ── Editable preview ────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
       <div>
         <p className="text-sm font-semibold text-foreground">
-          {editableSchedule!.length}{" "}
-          {editableSchedule!.length === 1 ? "class" : "classes"} found — review and edit
+          {editableSchedule!.length} {editableSchedule!.length === 1 ? "class" : "classes"} found
+          {" "}review and edit
         </p>
         <p className="mt-0.5 text-xs text-muted">
           Make any corrections before saving. Click days or rotation to toggle them.
@@ -186,9 +195,8 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
         {editableSchedule!.map((cls, i) => (
           <div
             key={i}
-            className="rounded-xl border border-border bg-surface px-4 py-3 space-y-3"
+            className="space-y-3 rounded-xl border border-border bg-surface px-4 py-3"
           >
-            {/* Name + remove */}
             <div className="flex items-center gap-2">
               <div
                 className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -204,16 +212,15 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
               <button
                 type="button"
                 onClick={() => removeClass(i)}
-                className="shrink-0 text-xs text-muted hover:text-accent-rose-foreground transition"
+                className="shrink-0 text-xs text-muted transition hover:text-accent-rose-foreground"
                 title="Remove class"
               >
-                ✕
+                ×
               </button>
             </div>
 
-            {/* Time */}
             <div className="flex items-center gap-2 text-xs text-muted">
-              <span className="shrink-0 w-8">Time</span>
+              <span className="w-8 shrink-0">Time</span>
               <input
                 type="text"
                 value={cls.startTime}
@@ -221,7 +228,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
                 className="w-16 rounded-lg border border-border bg-card px-2 py-1 text-xs text-foreground outline-none focus:border-accent-green-foreground/50"
                 placeholder="09:00"
               />
-              <span>–</span>
+              <span>-</span>
               <input
                 type="text"
                 value={cls.endTime}
@@ -231,7 +238,6 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
               />
             </div>
 
-            {/* Day chips */}
             <div className="flex flex-wrap gap-1">
               {WEEKDAYS.map(({ label, value }) => (
                 <button
@@ -240,7 +246,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
                   onClick={() => toggleDay(i, value)}
                   className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
                     cls.days.includes(value)
-                      ? "bg-accent-green text-accent-green-foreground border border-accent-green-foreground/30"
+                      ? "border border-accent-green-foreground/30 bg-accent-green text-accent-green-foreground"
                       : "border border-border text-muted hover:bg-card hover:text-foreground"
                   }`}
                 >
@@ -249,9 +255,8 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
               ))}
             </div>
 
-            {/* Rotation chips */}
             <div className="flex items-center gap-2 text-xs text-muted">
-              <span className="shrink-0 w-14">Rotation</span>
+              <span className="w-14 shrink-0">Rotation</span>
               {(["A", "B", null] as const).map((label) => (
                 <button
                   key={String(label)}
@@ -260,10 +265,10 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
                   className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
                     cls.scheduleLabel === (label ?? undefined)
                       ? label === "A"
-                        ? "bg-accent-blue text-accent-blue-foreground border border-accent-blue-foreground/30"
+                        ? "border border-accent-blue-foreground/30 bg-accent-blue text-accent-blue-foreground"
                         : label === "B"
-                        ? "bg-accent-purple text-accent-purple-foreground border border-accent-purple-foreground/30"
-                        : "border border-border bg-card text-foreground"
+                          ? "border border-accent-purple-foreground/30 bg-accent-purple text-accent-purple-foreground"
+                          : "border border-border bg-card text-foreground"
                       : "border border-border text-muted hover:bg-card hover:text-foreground"
                   }`}
                 >
@@ -275,19 +280,26 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
         ))}
       </div>
 
+      {errorMessage && (
+        <p className="rounded-xl border border-accent-rose bg-accent-rose px-4 py-2.5 text-sm text-accent-rose-foreground">
+          {errorMessage}
+        </p>
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={handleConfirm}
-          disabled={!editableSchedule || editableSchedule.length === 0}
+          onClick={() => void handleConfirm()}
+          disabled={!editableSchedule || editableSchedule.length === 0 || isSaving}
           className="rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-40"
         >
-          Add {editableSchedule!.length}{" "}
+          {isSaving ? "Saving..." : "Add"} {editableSchedule!.length}{" "}
           {editableSchedule!.length === 1 ? "class" : "classes"}
         </button>
         <button
           type="button"
           onClick={handleBack}
+          disabled={isSaving}
           className="rounded-full border border-border px-5 py-2.5 text-sm font-medium text-foreground transition hover:bg-surface"
         >
           Back
@@ -296,7 +308,8 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
           <button
             type="button"
             onClick={onCancel}
-            className="text-sm text-muted hover:text-foreground transition"
+            disabled={isSaving}
+            className="text-sm text-muted transition hover:text-foreground"
           >
             Cancel
           </button>

@@ -1,9 +1,6 @@
-// UI redesign pass
 "use client";
 
-// TODO: Replace with Supabase-backed class persistence in a future sprint
-
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ScheduleCard } from "../../components/ScheduleCard";
 import { ScheduleSetupInput } from "../../components/ScheduleSetupInput";
 import { SectionHeader } from "../../components/SectionHeader";
@@ -34,13 +31,13 @@ const WEEKDAYS: { label: string; value: Weekday }[] = [
 type DayTime = { start: string; end: string };
 
 export default function ClassesPage() {
-  const { classes, addClass, addClasses, deleteClass } = useClasses();
+  const { classes, loading, addClass, addClasses, deleteClass } = useClasses();
 
-  // Show NL setup by default when no classes exist
-  const [setupVisible, setSetupVisible] = useState(classes.length === 0);
+  const [setupVisible, setSetupVisible] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const hasInitializedSetup = useRef(false);
 
-  // Manual form state
   const [name, setName] = useState("");
   const [teacherName, setTeacherName] = useState("");
   const [days, setDays] = useState<Weekday[]>([]);
@@ -53,6 +50,12 @@ export default function ClassesPage() {
   const [scheduleLabel, setScheduleLabel] = useState<ScheduleLabel>("");
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (loading || hasInitializedSetup.current) return;
+    setSetupVisible(classes.length === 0);
+    hasInitializedSetup.current = true;
+  }, [loading, classes.length]);
+
   const toggleDay = (day: Weekday) => {
     setDays((prev) => {
       if (prev.includes(day)) {
@@ -62,13 +65,13 @@ export default function ClassesPage() {
           return next;
         });
         return prev.filter((d) => d !== day);
-      } else {
-        setDayTimes((dt) => ({
-          ...dt,
-          [day]: { start: startTime || "08:00", end: endTime || "09:00" },
-        }));
-        return [...prev, day];
       }
+
+      setDayTimes((dt) => ({
+        ...dt,
+        [day]: { start: startTime || "08:00", end: endTime || "09:00" },
+      }));
+      return [...prev, day];
     });
   };
 
@@ -88,9 +91,10 @@ export default function ClassesPage() {
     setColor(COLOR_SWATCHES[0].value);
     setScheduleLabel("");
     setValidationError(null);
+    setMutationError(null);
   };
 
-  const handleManualSubmit = (event: React.FormEvent) => {
+  const handleManualSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
     if (!name.trim()) {
@@ -104,6 +108,7 @@ export default function ClassesPage() {
     }
 
     setValidationError(null);
+    setMutationError(null);
 
     let meetings: ClassMeetingTime[] | undefined;
     let canonicalStart = startTime;
@@ -119,20 +124,24 @@ export default function ClassesPage() {
       canonicalEnd = meetings[0]?.endTime ?? endTime;
     }
 
-    addClass({
-      name: name.trim(),
-      teacherName: teacherName.trim() || undefined,
-      days,
-      startTime: canonicalStart,
-      endTime: canonicalEnd,
-      meetings,
-      room: room.trim() || undefined,
-      color,
-      scheduleLabel: scheduleLabel || undefined,
-    });
+    try {
+      await addClass({
+        name: name.trim(),
+        teacherName: teacherName.trim() || undefined,
+        days,
+        startTime: canonicalStart,
+        endTime: canonicalEnd,
+        meetings,
+        room: room.trim() || undefined,
+        color,
+        scheduleLabel: scheduleLabel || undefined,
+      });
 
-    resetForm();
-    setFormOpen(false);
+      resetForm();
+      setFormOpen(false);
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : "Failed to save class.");
+    }
   };
 
   const handleManualCancel = () => {
@@ -140,8 +149,10 @@ export default function ClassesPage() {
     setFormOpen(false);
   };
 
-  const handleSchedulesConfirmed = (newClasses: Array<Omit<SchoolClass, "id">>) => {
-    addClasses(newClasses);
+  const handleSchedulesConfirmed = async (
+    newClasses: Array<Omit<SchoolClass, "id">>
+  ) => {
+    await addClasses(newClasses);
     setSetupVisible(false);
   };
 
@@ -149,7 +160,7 @@ export default function ClassesPage() {
     "w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40";
 
   const hasClasses = classes.length > 0;
-  const showActionBar = !setupVisible && !formOpen;
+  const showActionBar = !loading && !setupVisible && !formOpen;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-10">
@@ -158,15 +169,20 @@ export default function ClassesPage() {
         description="Describe your schedule in plain English and the assistant will set it up for you."
       />
 
-      {/* ── Primary: natural-language schedule setup ── */}
-      {setupVisible && (
-        <section className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4">
+      {loading && (
+        <div className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted shadow-sm">
+          Loading your classes...
+        </div>
+      )}
+
+      {!loading && setupVisible && (
+        <section className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-sm">
           <div>
             <p className="text-base font-semibold text-foreground">
               Describe your full schedule
             </p>
             <p className="mt-1 text-sm text-muted">
-              Paste or type your classes in plain English — include times, days, and A/B rotation if your school uses it.
+              Paste or type your classes in plain English - include times, days, and A/B rotation if your school uses it.
               The assistant will parse everything and let you review before saving.
             </p>
           </div>
@@ -179,7 +195,6 @@ export default function ClassesPage() {
         </section>
       )}
 
-      {/* ── Action bar: shown when no panel is open ── */}
       {showActionBar && (
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -199,18 +214,16 @@ export default function ClassesPage() {
         </div>
       )}
 
-      {/* ── Fallback: manual add form ── */}
-      {formOpen && (
-        <section className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-5">
+      {!loading && formOpen && (
+        <section className="space-y-5 rounded-2xl border border-border bg-card p-6 shadow-sm">
           <div>
             <h2 className="text-base font-semibold text-foreground">Add a single class</h2>
             <p className="mt-0.5 text-sm text-muted">
-              Fill in what you know — everything except the class name is optional.
+              Fill in what you know - everything except the class name is optional.
             </p>
           </div>
 
           <form onSubmit={handleManualSubmit} className="space-y-5">
-            {/* Class name */}
             <label className="block">
               <span className="mb-1.5 block text-sm font-medium text-foreground">
                 Class name <span className="text-accent-rose-foreground">*</span>
@@ -224,11 +237,9 @@ export default function ClassesPage() {
               />
             </label>
 
-            {/* Teacher name */}
             <label className="block">
               <span className="mb-1.5 block text-sm font-medium text-foreground">
-                Teacher{" "}
-                <span className="text-muted text-xs font-normal">(optional)</span>
+                Teacher <span className="text-xs font-normal text-muted">(optional)</span>
               </span>
               <input
                 type="text"
@@ -239,17 +250,15 @@ export default function ClassesPage() {
               />
             </label>
 
-            {/* Meeting days */}
             <fieldset>
               <legend className="mb-2 text-sm font-medium text-foreground">
-                Meeting days{" "}
-                <span className="text-muted text-xs font-normal">(optional)</span>
+                Meeting days <span className="text-xs font-normal text-muted">(optional)</span>
               </legend>
               <div className="flex flex-wrap gap-2">
                 {WEEKDAYS.map(({ label, value }) => (
                   <label
                     key={value}
-                    className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition select-none ${
+                    className={`flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
                       days.includes(value)
                         ? "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
                         : "border-border bg-card text-muted hover:bg-surface"
@@ -267,7 +276,6 @@ export default function ClassesPage() {
               </div>
             </fieldset>
 
-            {/* Time section */}
             {days.length > 0 && (
               <div className="space-y-4">
                 <label className="flex cursor-pointer items-center gap-2.5">
@@ -311,13 +319,12 @@ export default function ClassesPage() {
                 )}
 
                 {usePerDayTimes && (
-                  <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
+                  <div className="space-y-3 rounded-xl border border-border bg-surface p-4">
                     <p className="text-xs font-medium uppercase tracking-wide text-muted">
                       Times per day
                     </p>
                     {days.map((day) => {
-                      const dayLabel =
-                        WEEKDAYS.find((w) => w.value === day)?.label ?? day;
+                      const dayLabel = WEEKDAYS.find((w) => w.value === day)?.label ?? day;
                       return (
                         <div key={day} className="flex items-center gap-3">
                           <span className="w-9 shrink-0 text-sm font-medium text-foreground">
@@ -329,7 +336,7 @@ export default function ClassesPage() {
                             onChange={(e) => updateDayTime(day, "start", e.target.value)}
                             className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40"
                           />
-                          <span className="text-muted text-sm">–</span>
+                          <span className="text-sm text-muted">-</span>
                           <input
                             type="time"
                             value={dayTimes[day]?.end ?? ""}
@@ -344,11 +351,9 @@ export default function ClassesPage() {
               </div>
             )}
 
-            {/* Room */}
             <label className="block">
               <span className="mb-1.5 block text-sm font-medium text-foreground">
-                Room{" "}
-                <span className="text-muted text-xs font-normal">(optional)</span>
+                Room <span className="text-xs font-normal text-muted">(optional)</span>
               </span>
               <input
                 type="text"
@@ -359,7 +364,6 @@ export default function ClassesPage() {
               />
             </label>
 
-            {/* Color swatches */}
             <fieldset>
               <legend className="mb-2 text-sm font-medium text-foreground">Color</legend>
               <div className="flex flex-wrap gap-2">
@@ -372,7 +376,7 @@ export default function ClassesPage() {
                     style={{ backgroundColor: swatch.value }}
                     className={`h-8 w-8 rounded-full border-2 transition ${
                       color === swatch.value
-                        ? "border-foreground scale-110"
+                        ? "scale-110 border-foreground"
                         : "border-transparent hover:border-muted"
                     }`}
                   />
@@ -380,11 +384,9 @@ export default function ClassesPage() {
               </div>
             </fieldset>
 
-            {/* A/B day rotation */}
             <fieldset>
               <legend className="mb-2 text-sm font-medium text-foreground">
-                Rotating schedule{" "}
-                <span className="text-muted text-xs font-normal">(optional)</span>
+                Rotating schedule <span className="text-xs font-normal text-muted">(optional)</span>
               </legend>
               <p className="mb-2.5 text-xs text-muted">
                 If your school uses A/B day rotation, label this class so the assistant knows which rotation it belongs to.
@@ -393,13 +395,13 @@ export default function ClassesPage() {
                 {(["", "A", "B"] as ScheduleLabel[]).map((label) => (
                   <label
                     key={label === "" ? "none" : label}
-                    className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition select-none ${
+                    className={`flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
                       scheduleLabel === label
                         ? label === "A"
                           ? "border-accent-blue-foreground bg-accent-blue font-medium text-accent-blue-foreground"
                           : label === "B"
-                          ? "border-accent-purple-foreground bg-accent-purple font-medium text-accent-purple-foreground"
-                          : "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
+                            ? "border-accent-purple-foreground bg-accent-purple font-medium text-accent-purple-foreground"
+                            : "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
                         : "border-border bg-card text-muted hover:bg-surface"
                     }`}
                   >
@@ -422,6 +424,12 @@ export default function ClassesPage() {
               </p>
             )}
 
+            {mutationError && (
+              <p className="rounded-xl border border-accent-rose bg-accent-rose px-4 py-2.5 text-sm text-accent-rose-foreground">
+                {mutationError}
+              </p>
+            )}
+
             <div className="flex flex-wrap gap-3 pt-1">
               <button
                 type="submit"
@@ -441,20 +449,20 @@ export default function ClassesPage() {
         </section>
       )}
 
-      {/* ── Class grid ── */}
-      {hasClasses ? (
+      {!loading && hasClasses ? (
         <div className="grid gap-4 md:grid-cols-2">
           {classes.map((schoolClass) => (
             <ScheduleCard
               key={schoolClass.id}
               schoolClass={schoolClass}
-              onDelete={() => deleteClass(schoolClass.id)}
+              onDelete={() => void deleteClass(schoolClass.id)}
             />
           ))}
         </div>
       ) : (
+        !loading &&
         !setupVisible && (
-          <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center space-y-4">
+          <div className="space-y-4 rounded-2xl border border-dashed border-border bg-card p-10 text-center">
             <p className="text-sm text-muted">
               No classes yet. Describe your schedule above and the assistant will set it all up for you.
             </p>

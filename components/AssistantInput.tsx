@@ -1,10 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import type { ChatMessage, ReminderPreference, SchoolClass, StudentTask, Weekday } from "../types";
 import { formatDueDate } from "../lib/datetime";
-
 import { useScheduleConfig } from "../lib/stores/scheduleConfig";
+import type {
+  ChatMessage,
+  ReminderPreference,
+  SchoolClass,
+  StudentTask,
+  Weekday,
+} from "../types";
 
 const WEEKDAYS: { label: string; value: Weekday }[] = [
   { label: "Mon", value: "monday" },
@@ -29,7 +34,7 @@ type AssistantInputProps = {
   classes: SchoolClass[];
   reminderPreferences: ReminderPreference;
   onTaskConfirmed: (task: StudentTask) => void;
-  onSchedulesConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => void;
+  onSchedulesConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => Promise<void> | void;
 };
 
 type AssistantResponse =
@@ -37,7 +42,6 @@ type AssistantResponse =
   | { intent: "setup_schedule"; classes: Array<Omit<SchoolClass, "id">> }
   | { intent: "chat"; reply: ChatMessage };
 
-// Styled for the dark hero background on the dashboard
 export function AssistantInput({
   tasks,
   classes,
@@ -51,6 +55,7 @@ export function AssistantInput({
   const [editableSchedule, setEditableSchedule] = useState<Array<Omit<SchoolClass, "id">> | null>(null);
   const [chatReply, setChatReply] = useState<ChatMessage | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   const { todayDayType } = useScheduleConfig();
 
@@ -85,7 +90,9 @@ export function AssistantInput({
 
       if (json.intent === "setup_schedule") {
         if (json.classes.length === 0) {
-          setErrorMessage("Couldn't parse any classes from that description. Try being more specific — for example: \"English A-day 8–9:15, Math Mon/Wed/Fri 1–1:50.\"");
+          setErrorMessage(
+            'Couldn\'t parse any classes from that description. Try being more specific, for example: "English A-day 8-9:15, Math Mon/Wed/Fri 1-1:50."'
+          );
           setStatus("error");
         } else {
           setEditableSchedule(json.classes);
@@ -130,30 +137,43 @@ export function AssistantInput({
   const handleCancelTask = () => {
     setTaskPreview(null);
     setStatus("idle");
-    // Keep input so the student can re-word if needed
   };
 
-  const handleConfirmSchedule = () => {
+  const handleConfirmSchedule = async () => {
     if (!editableSchedule) return;
-    onSchedulesConfirmed(editableSchedule);
-    setEditableSchedule(null);
-    setInput("");
-    setStatus("idle");
+    setErrorMessage(null);
+    setIsSavingSchedule(true);
+
+    try {
+      await onSchedulesConfirmed(editableSchedule);
+      setEditableSchedule(null);
+      setInput("");
+      setStatus("idle");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to save classes.");
+    } finally {
+      setIsSavingSchedule(false);
+    }
   };
 
   const handleCancelSchedule = () => {
     setEditableSchedule(null);
     setStatus("idle");
+    setErrorMessage(null);
   };
 
   const updateEditableClass = (i: number, patch: Partial<Omit<SchoolClass, "id">>) => {
-    setEditableSchedule((prev) => prev?.map((cls, idx) => (idx === i ? { ...cls, ...patch } : cls)) ?? null);
+    setEditableSchedule((prev) =>
+      prev?.map((cls, idx) => (idx === i ? { ...cls, ...patch } : cls)) ?? null
+    );
   };
 
   const toggleEditableDay = (i: number, day: Weekday) => {
     const cls = editableSchedule?.[i];
     if (!cls) return;
-    const days = cls.days.includes(day) ? cls.days.filter((d) => d !== day) : [...cls.days, day];
+    const days = cls.days.includes(day)
+      ? cls.days.filter((d) => d !== day)
+      : [...cls.days, day];
     updateEditableClass(i, { days });
   };
 
@@ -174,7 +194,6 @@ export function AssistantInput({
 
   return (
     <div className="space-y-3">
-      {/* ── Main input — hidden while reviewing a preview ── */}
       {status !== "task-preview" && status !== "schedule-preview" && (
         <form onSubmit={handleSubmit} className="space-y-3">
           <textarea
@@ -186,7 +205,7 @@ export function AssistantInput({
                 void handleSubmit(e as unknown as React.FormEvent);
               }
             }}
-            placeholder="Add a task, ask about your week, or describe your full schedule to set it up…"
+            placeholder="Add a task, ask about your week, or describe your full schedule to set it up..."
             rows={3}
             disabled={isSubmitting}
             className="w-full resize-none rounded-2xl border border-white/20 bg-white/10 px-4 py-3.5 text-sm text-white placeholder:text-white/40 outline-none transition focus:border-white/40 focus:bg-white/15 focus:ring-2 focus:ring-white/10 disabled:opacity-60"
@@ -197,7 +216,7 @@ export function AssistantInput({
               disabled={isSubmitting || !input.trim()}
               className="rounded-full bg-sidebar-accent px-5 py-2.5 text-sm font-semibold text-hero transition hover:opacity-90 disabled:opacity-40"
             >
-              {isSubmitting ? "Thinking…" : "Send"}
+              {isSubmitting ? "Thinking..." : "Send"}
             </button>
             <p className="text-xs text-white/40">Enter to send · Shift+Enter for new line</p>
             {status === "chat-reply" && (
@@ -213,7 +232,6 @@ export function AssistantInput({
         </form>
       )}
 
-      {/* ── Chat reply bubble — shown on dark hero background ── */}
       {status === "chat-reply" && chatReply && (
         <div className="rounded-2xl border border-white/15 bg-white/10 px-5 py-4 backdrop-blur-sm">
           <div className="mb-2 flex items-center gap-2">
@@ -222,7 +240,7 @@ export function AssistantInput({
             </span>
             <p className="text-xs font-medium text-white/60">Assistant</p>
           </div>
-          <p className="text-sm leading-relaxed text-white/90 whitespace-pre-wrap">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/90">
             {chatReply.content}
           </p>
           <div className="mt-3 flex gap-3">
@@ -243,9 +261,8 @@ export function AssistantInput({
         </div>
       )}
 
-      {/* ── Task preview card — dark-themed to match hero ── */}
       {status === "task-preview" && taskPreview && (
-        <div className="rounded-2xl border border-white/15 bg-hero-mid px-5 py-5 space-y-4">
+        <div className="space-y-4 rounded-2xl border border-white/15 bg-hero-mid px-5 py-5">
           <div>
             <p className="text-sm font-semibold text-white">Review before saving</p>
             <p className="mt-0.5 text-xs text-white/50">
@@ -289,7 +306,7 @@ export function AssistantInput({
           {!taskPreview.dueAt && (
             <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3">
               <p className="text-sm text-amber-300">
-                No due date was found — add one manually after confirming, or cancel and re-word with a date.
+                No due date was found. Add one manually after confirming, or cancel and re-word with a date.
               </p>
             </div>
           )}
@@ -313,9 +330,8 @@ export function AssistantInput({
         </div>
       )}
 
-      {/* ── Schedule preview — editable before bulk-adding ── */}
       {status === "schedule-preview" && editableSchedule && (
-        <div className="rounded-2xl border border-white/15 bg-hero-mid px-5 py-5 space-y-4">
+        <div className="space-y-4 rounded-2xl border border-white/15 bg-hero-mid px-5 py-5">
           <div>
             <p className="text-sm font-semibold text-white">
               Review your schedule — {editableSchedule.length}{" "}
@@ -330,9 +346,8 @@ export function AssistantInput({
             {editableSchedule.map((cls, i) => (
               <div
                 key={i}
-                className="rounded-xl border border-white/10 bg-hero px-4 py-3 space-y-3"
+                className="space-y-3 rounded-xl border border-white/10 bg-hero px-4 py-3"
               >
-                {/* Row: color dot + name + remove */}
                 <div className="flex items-center gap-2">
                   <div
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -348,14 +363,13 @@ export function AssistantInput({
                   <button
                     type="button"
                     onClick={() => removeEditableClass(i)}
-                    className="shrink-0 text-xs text-white/30 hover:text-red-400 transition"
+                    className="shrink-0 text-xs text-white/30 transition hover:text-red-400"
                     title="Remove class"
                   >
-                    ✕
+                    ×
                   </button>
                 </div>
 
-                {/* Row: time inputs */}
                 <div className="flex items-center gap-2 text-xs text-white/50">
                   <span className="shrink-0">Time</span>
                   <input
@@ -365,7 +379,7 @@ export function AssistantInput({
                     className="w-16 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white placeholder:text-white/30 outline-none focus:border-white/30 focus:bg-white/10"
                     placeholder="09:00"
                   />
-                  <span>–</span>
+                  <span>-</span>
                   <input
                     type="text"
                     value={cls.endTime}
@@ -375,7 +389,6 @@ export function AssistantInput({
                   />
                 </div>
 
-                {/* Row: day chips */}
                 <div className="flex flex-wrap gap-1">
                   {WEEKDAYS.map(({ label, value }) => (
                     <button
@@ -384,7 +397,7 @@ export function AssistantInput({
                       onClick={() => toggleEditableDay(i, value)}
                       className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
                         cls.days.includes(value)
-                          ? "bg-sidebar-accent/30 text-sidebar-accent border border-sidebar-accent/40"
+                          ? "border border-sidebar-accent/40 bg-sidebar-accent/30 text-sidebar-accent"
                           : "border border-white/10 text-white/40 hover:border-white/25 hover:text-white/60"
                       }`}
                     >
@@ -393,7 +406,6 @@ export function AssistantInput({
                   ))}
                 </div>
 
-                {/* Row: A/B/none schedule label */}
                 <div className="flex items-center gap-2 text-xs text-white/50">
                   <span>Rotation</span>
                   {(["A", "B", null] as const).map((label) => (
@@ -404,10 +416,10 @@ export function AssistantInput({
                       className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
                         cls.scheduleLabel === (label ?? undefined)
                           ? label === "A"
-                            ? "bg-blue-500/30 text-blue-300 border border-blue-500/40"
+                            ? "border border-blue-500/40 bg-blue-500/30 text-blue-300"
                             : label === "B"
-                            ? "bg-purple-500/30 text-purple-300 border border-purple-500/40"
-                            : "bg-white/10 text-white/70 border border-white/20"
+                              ? "border border-purple-500/40 bg-purple-500/30 text-purple-300"
+                              : "border border-white/20 bg-white/10 text-white/70"
                           : "border border-white/10 text-white/40 hover:border-white/25 hover:text-white/60"
                       }`}
                     >
@@ -419,18 +431,26 @@ export function AssistantInput({
             ))}
           </div>
 
+          {errorMessage && (
+            <div className="rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3">
+              <p className="text-sm text-red-300">{errorMessage}</p>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={handleConfirmSchedule}
-              disabled={editableSchedule.length === 0}
+              onClick={() => void handleConfirmSchedule()}
+              disabled={editableSchedule.length === 0 || isSavingSchedule}
               className="rounded-full bg-sidebar-accent px-5 py-2.5 text-sm font-semibold text-hero transition hover:opacity-90 disabled:opacity-40"
             >
-              Add {editableSchedule.length} {editableSchedule.length === 1 ? "class" : "classes"}
+              {isSavingSchedule ? "Saving..." : "Add"} {editableSchedule.length}{" "}
+              {editableSchedule.length === 1 ? "class" : "classes"}
             </button>
             <button
               type="button"
               onClick={handleCancelSchedule}
+              disabled={isSavingSchedule}
               className="rounded-full border border-white/20 px-5 py-2.5 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
             >
               Cancel
@@ -439,7 +459,6 @@ export function AssistantInput({
         </div>
       )}
 
-      {/* ── Error state ── */}
       {status === "error" && errorMessage && (
         <div className="rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3">
           <p className="text-sm text-red-300">{errorMessage}</p>

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ChatMessage, ReminderPreference, SchoolCalendarEntry, SchoolClass, StudentTask } from "../types";
 import { buildCalendarContext, getEffectiveDays } from "./schedule";
+import { formatApTemplateForPrompt, getApTemplate } from "./ap-course-templates";
 
 const client = new OpenAI(); // Reads OPENAI_API_KEY from environment automatically
 
@@ -129,6 +130,44 @@ Return format — an object with a single "classes" key:
   }
 }
 
+/**
+ * Finds the first class explicitly mentioned in the user's message.
+ * Used to decide whether to inject class-specific knowledge into the prompt.
+ */
+function findMentionedClass(message: string, classes: SchoolClass[]): SchoolClass | null {
+  const lower = message.toLowerCase();
+  // Prefer longer names first to avoid partial matches (e.g. "Bio" before "AP Bio")
+  const sorted = [...classes].sort((a, b) => b.name.length - a.name.length);
+  return sorted.find((c) => lower.includes(c.name.toLowerCase())) ?? null;
+}
+
+/**
+ * Builds a compact class knowledge block for the system prompt.
+ * Only called when a specific class is mentioned in the user message.
+ * Returns an empty string when there's no knowledge to inject.
+ */
+function buildClassKnowledgeSection(cls: SchoolClass): string {
+  const parts: string[] = [];
+
+  if (cls.syllabusText?.trim()) {
+    parts.push(`Syllabus/course overview:\n${cls.syllabusText.trim()}`);
+  }
+  if (cls.classNotes?.trim()) {
+    parts.push(`Student notes about this class:\n${cls.classNotes.trim()}`);
+  }
+  if (cls.isApCourse) {
+    const template = getApTemplate(cls.apCourseKey);
+    if (template) {
+      parts.push(formatApTemplateForPrompt(template));
+    } else {
+      parts.push("Course type: AP course (no built-in template available)");
+    }
+  }
+
+  if (parts.length === 0) return "";
+  return `\nClass knowledge for ${cls.name}:\n${parts.join("\n\n")}`;
+}
+
 // Called by /api/ai/assistant when the message intent is classified as "chat".
 // Builds a context-aware system prompt and calls the OpenAI API directly.
 export async function answerWorkloadQuestion(
@@ -157,6 +196,12 @@ export async function answerWorkloadQuestion(
     todayDateStr,
     effectiveDayType ?? null
   );
+
+  // Only inject class-specific knowledge when the message references a particular class
+  const mentionedClass = findMentionedClass(message, classes);
+  const classKnowledgeSection = mentionedClass
+    ? buildClassKnowledgeSection(mentionedClass)
+    : "";
 
   // Build class schedule lines with per-day meeting detail and A/B labels
   const classLines = classes
@@ -216,7 +261,7 @@ School calendar context:
 ${calendarSection}
 
 The student's classes are:
-${classLines || "No classes on record."}
+${classLines || "No classes on record."}${classKnowledgeSection}
 
 The student's current tasks are:
 ${taskLines || "No tasks on record."}

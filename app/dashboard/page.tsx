@@ -80,7 +80,7 @@ function formatTodayLong(): string {
 
 export default function DashboardPage() {
   const { classes, addClasses } = useClasses();
-  const { tasks, addTask } = useTaskStore();
+  const { tasks, addTask, completeTask, deleteTask } = useTaskStore();
   const { preferences: reminderPreferences } = useReminderStore();
   const { todayDayType, setTodayDayType } = useScheduleConfig();
   const { entries: calendarEntries, getEntryForDate } = useCalendar();
@@ -381,6 +381,8 @@ export default function DashboardPage() {
                           task={task}
                           schoolClass={classes.find((c) => c.id === task.classId)}
                           isOverdue={bucket === "overdue"}
+                          onComplete={completeTask}
+                          onDelete={deleteTask}
                         />
                       ))}
                       {bucketTasks.length > 3 && (

@@ -45,6 +45,14 @@ export interface SchoolClass {
   scheduleLabel?: "A" | "B";
   /** Optional freeform notes about the class (syllabus info, grading policy, AI tutoring context). */
   notes?: string;
+  /** Syllabus or course overview text — used by the assistant for class-specific context. */
+  syllabusText?: string;
+  /** Student's own class notes or context — supplements the assistant's understanding. */
+  classNotes?: string;
+  /** True when the class has been identified as an AP course. */
+  isApCourse?: boolean;
+  /** Key into AP_COURSE_TEMPLATES for built-in AP knowledge pack. Null if AP but no template match. */
+  apCourseKey?: string | null;
 }
 
 export type TaskStatus = "todo" | "in_progress" | "done";
@@ -176,4 +184,16 @@ export interface CreateAutomationAction {
   };
 }
 
-export type AssistantAction = CreateAutomationAction;
+/**
+ * Action to mark a task as completed via assistant chat.
+ * The assistant may supply taskId (preferred) or taskTitle for fuzzy matching.
+ */
+export interface CompleteTaskAction {
+  type: "complete_task";
+  /** Exact task id when the assistant has it from context. */
+  taskId?: string;
+  /** Human-readable title used for fuzzy matching when id is unavailable. */
+  taskTitle?: string;
+}
+
+export type AssistantAction = CreateAutomationAction | CompleteTaskAction;

@@ -7,6 +7,8 @@ type TaskCardProps = {
   schoolClass?: SchoolClass;
   // Pass true when this card is rendered inside the "overdue" bucket
   isOverdue?: boolean;
+  onComplete?: (taskId: string) => void;
+  onDelete?: (taskId: string) => void;
 };
 
 const TYPE_BORDER: Record<string, string> = {
@@ -29,7 +31,7 @@ const STATUS_BADGE: Record<string, string> = {
   done: "bg-accent-green text-accent-green-foreground",
 };
 
-export function TaskCard({ task, schoolClass, isOverdue = false }: TaskCardProps) {
+export function TaskCard({ task, schoolClass, isOverdue = false, onComplete, onDelete }: TaskCardProps) {
   const borderColor = TYPE_BORDER[task.type ?? ""] ?? "border-l-accent-green-foreground";
   const typeBadge = TYPE_BADGE[task.type ?? ""] ?? "bg-accent-green text-accent-green-foreground";
   const statusBadge = STATUS_BADGE[task.status] ?? "bg-surface text-muted";
@@ -39,19 +41,41 @@ export function TaskCard({ task, schoolClass, isOverdue = false }: TaskCardProps
     isOverdue ||
     (task.dueAt && task.status !== "done" && isPast(task.dueAt));
 
+  const isDone = task.status === "done";
+
   return (
     <article
-      className={`rounded-xl border border-border border-l-4 ${borderColor} bg-card p-4 hover:shadow-md transition-shadow`}
+      className={`group rounded-xl border border-border border-l-4 ${borderColor} bg-card p-4 hover:shadow-md transition-shadow ${isDone ? "opacity-60" : ""}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="text-[15px] font-semibold text-foreground leading-snug">
-            {task.title}
-          </h3>
-          <p className="mt-1 text-xs text-muted">
-            {schoolClass ? schoolClass.name : "General school task"}
-            {task.dueAt ? ` • ${formatDueDate(task.dueAt)}` : ""}
-          </p>
+        <div className="min-w-0 flex items-start gap-3">
+          {/* Complete checkbox */}
+          {onComplete && (
+            <button
+              type="button"
+              onClick={() => onComplete(task.id)}
+              disabled={isDone}
+              title={isDone ? "Already completed" : "Mark as complete"}
+              className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                isDone
+                  ? "border-accent-green-foreground/50 bg-accent-green/30 text-accent-green-foreground cursor-default"
+                  : "border-border hover:border-accent-green-foreground/60 hover:bg-accent-green/10 text-transparent hover:text-accent-green-foreground"
+              }`}
+            >
+              <svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </button>
+          )}
+          <div>
+            <h3 className={`text-[15px] font-semibold leading-snug ${isDone ? "line-through text-muted" : "text-foreground"}`}>
+              {task.title}
+            </h3>
+            <p className="mt-1 text-xs text-muted">
+              {schoolClass ? schoolClass.name : "General school task"}
+              {task.dueAt ? ` • ${formatDueDate(task.dueAt)}` : ""}
+            </p>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
@@ -71,6 +95,19 @@ export function TaskCard({ task, schoolClass, isOverdue = false }: TaskCardProps
             >
               {task.type}
             </span>
+          )}
+          {/* Delete button */}
+          {onDelete && (
+            <button
+              type="button"
+              onClick={() => onDelete(task.id)}
+              title="Remove task"
+              className="ml-1 flex h-6 w-6 items-center justify-center rounded-lg text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent-rose/10 hover:text-accent-rose-foreground"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           )}
         </div>
       </div>

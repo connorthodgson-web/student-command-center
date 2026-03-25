@@ -20,9 +20,11 @@ type ScheduleCardProps = {
   schoolClass: SchoolClass;
   /** Optional delete handler — shows a remove button when provided */
   onDelete?: () => void;
+  /** Optional handler to open the Class Knowledge editor */
+  onKnowledge?: () => void;
 };
 
-export function ScheduleCard({ schoolClass, onDelete }: ScheduleCardProps) {
+export function ScheduleCard({ schoolClass, onDelete, onKnowledge }: ScheduleCardProps) {
   const effectiveDays = getEffectiveDays(schoolClass);
   const mixedTimes = hasMixedTimes(schoolClass);
   const meetings = sortedMeetings(schoolClass);
@@ -54,6 +56,12 @@ export function ScheduleCard({ schoolClass, onDelete }: ScheduleCardProps) {
                   {schoolClass.scheduleLabel}-Day
                 </span>
               )}
+              {/* AP badge */}
+              {schoolClass.isApCourse && (
+                <span className="inline-flex items-center rounded-full bg-accent-amber px-2 py-0.5 text-[11px] font-semibold text-accent-amber-foreground">
+                  AP
+                </span>
+              )}
             </div>
 
             {(schoolClass.teacherName || schoolClass.room) && (
@@ -83,19 +91,38 @@ export function ScheduleCard({ schoolClass, onDelete }: ScheduleCardProps) {
             )}
           </div>
 
-          {onDelete && (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-surface hover:text-foreground"
-              title="Remove class"
-              aria-label={`Remove ${schoolClass.name}`}
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
+          <div className="flex shrink-0 items-center gap-1">
+            {onKnowledge && (
+              <button
+                type="button"
+                onClick={onKnowledge}
+                title="Class knowledge"
+                aria-label={`Edit knowledge for ${schoolClass.name}`}
+                className={`rounded-full p-1 transition-colors hover:bg-surface ${
+                  (schoolClass.syllabusText || schoolClass.classNotes || schoolClass.isApCourse)
+                    ? "text-accent-green-foreground"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+              </button>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-surface hover:text-foreground"
+                title="Remove class"
+                aria-label={`Remove ${schoolClass.name}`}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Day pills */}

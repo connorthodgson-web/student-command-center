@@ -12,7 +12,44 @@ import { getAbOverrideForDate, getTodayDateString } from "../lib/schedule";
 import { loadProfile } from "../lib/profile";
 import { loadActivities } from "../lib/activities";
 import { loadConstraints } from "../lib/constraints";
-import type { AssistantAction, ChatMessage } from "../types";
+import type { AssistantAction, ChatMessage, StudentTask } from "../types";
+
+// ── Task matching ─────────────────────────────────────────────────────────────
+// Simple, reliable matching — no external library needed.
+
+function matchTask(
+  tasks: StudentTask[],
+  taskId?: string,
+  taskTitle?: string
+): { match: StudentTask | null; ambiguous: boolean } {
+  const active = tasks.filter((t) => t.status !== "done");
+
+  // 1. Exact id match (most reliable — AI supplies this from context)
+  if (taskId) {
+    const byId = active.find((t) => t.id === taskId);
+    if (byId) return { match: byId, ambiguous: false };
+  }
+
+  if (!taskTitle) return { match: null, ambiguous: false };
+
+  const needle = taskTitle.trim().toLowerCase();
+
+  // 2. Exact title match
+  const exactMatches = active.filter(
+    (t) => t.title.toLowerCase() === needle
+  );
+  if (exactMatches.length === 1) return { match: exactMatches[0], ambiguous: false };
+  if (exactMatches.length > 1) return { match: null, ambiguous: true };
+
+  // 3. Contains match
+  const containsMatches = active.filter((t) =>
+    t.title.toLowerCase().includes(needle) || needle.includes(t.title.toLowerCase())
+  );
+  if (containsMatches.length === 1) return { match: containsMatches[0], ambiguous: false };
+  if (containsMatches.length > 1) return { match: null, ambiguous: true };
+
+  return { match: null, ambiguous: false };
+}
 
 // ── Voice input hook ──────────────────────────────────────────────────────────
 // Uses browser Web Speech API — lightweight, no external dependencies.
@@ -89,7 +126,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const profile = loadProfile();
   const activities = loadActivities();
   const constraints = loadConstraints();
-  const { tasks } = useTaskStore();
+  const { tasks, completeTask } = useTaskStore();
   const { preferences: reminderPreferences } = useReminderStore();
   const { classes } = useClasses();
   const { entries: calendarEntries } = useCalendar();
@@ -203,6 +240,33 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
             // Don't crash chat if save fails
           }
         }
+      }
+
+      // Handle task completion action
+      if (json.action?.type === "complete_task") {
+        const { taskId, taskTitle } = json.action;
+        const { match, ambiguous } = matchTask(tasks, taskId, taskTitle);
+
+        if (match) {
+          completeTask(match.id);
+          // Replace the assistant message with a clean confirmation
+          assistantMessage.content = `Done — I marked **${match.title}** as completed.`;
+        } else if (ambiguous) {
+          // Show a disambiguation list — do NOT guess
+          const activeTasks = tasks.filter((t) => t.status !== "done");
+          const needle = (taskTitle ?? "").toLowerCase();
+          const candidates = activeTasks
+            .filter(
+              (t) =>
+                t.title.toLowerCase().includes(needle) ||
+                needle.includes(t.title.toLowerCase())
+            )
+            .slice(0, 5);
+          const list = candidates.map((t) => `- ${t.title}`).join("\n");
+          assistantMessage.content =
+            `I found a few tasks that could match — which one did you finish?\n\n${list}`;
+        }
+        // If no match and not ambiguous, the assistant's natural reply stands (it may have asked for clarification)
       }
 
       setMessages((current) => [...current.slice(0, -1), assistantMessage]);

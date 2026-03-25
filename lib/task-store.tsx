@@ -9,6 +9,8 @@ import type { StudentTask } from "../types";
 type TaskStoreContextValue = {
   tasks: StudentTask[];
   addTask: (task: StudentTask) => void;
+  completeTask: (taskId: string) => void;
+  deleteTask: (taskId: string) => void;
 };
 
 const TaskStoreContext = createContext<TaskStoreContextValue | null>(null);
@@ -20,8 +22,22 @@ export function TaskStoreProvider({ children }: { children: React.ReactNode }) {
     setTasks((prev) => [task, ...prev]);
   };
 
+  const completeTask = (taskId: string) => {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === taskId
+          ? { ...t, status: "done" as const, updatedAt: new Date().toISOString() }
+          : t
+      )
+    );
+  };
+
+  const deleteTask = (taskId: string) => {
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+  };
+
   return (
-    <TaskStoreContext.Provider value={{ tasks, addTask }}>
+    <TaskStoreContext.Provider value={{ tasks, addTask, completeTask, deleteTask }}>
       {children}
     </TaskStoreContext.Provider>
   );

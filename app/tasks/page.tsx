@@ -13,10 +13,14 @@ type ViewMode = "timeline" | "by-class";
 
 export default function TasksPage() {
   const { classes } = useClasses();
-  const { tasks, addTask } = useTaskStore();
+  const { tasks, addTask, completeTask, deleteTask } = useTaskStore();
   const [viewMode, setViewMode] = useState<ViewMode>("timeline");
+  const [showCompleted, setShowCompleted] = useState(false);
 
-  const sortedTasks = sortTasksByDueDate(tasks);
+  const allSorted = sortTasksByDueDate(tasks);
+  const activeTasks = allSorted.filter((t) => t.status !== "done");
+  const completedTasks = allSorted.filter((t) => t.status === "done");
+  const sortedTasks = showCompleted ? allSorted : activeTasks;
 
   // Group tasks by classId for by-class view
   const tasksByClass: { classId: string | null; label: string; color?: string }[] = [
@@ -76,13 +80,30 @@ export default function TasksPage() {
 
       {/* Task list */}
       <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-foreground">
-          {viewMode === "timeline" ? "All Tasks" : "By Class"}
-        </h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-foreground">
+            {viewMode === "timeline" ? "All Tasks" : "By Class"}
+          </h2>
+          {completedTasks.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowCompleted((v) => !v)}
+              className="text-xs text-muted hover:text-foreground transition-colors"
+            >
+              {showCompleted
+                ? "Hide completed"
+                : `Show ${completedTasks.length} completed`}
+            </button>
+          )}
+        </div>
 
         <div className="mt-4">
           {sortedTasks.length === 0 ? (
-            <p className="text-sm text-muted">No tasks yet — add one above.</p>
+            <p className="text-sm text-muted">
+              {activeTasks.length === 0
+                ? "No tasks yet — add one above."
+                : "All tasks are complete!"}
+            </p>
           ) : viewMode === "timeline" ? (
             <div className="space-y-3">
               {sortedTasks.map((task) => (
@@ -90,6 +111,8 @@ export default function TasksPage() {
                   key={task.id}
                   task={task}
                   schoolClass={classes.find((c) => c.id === task.classId)}
+                  onComplete={task.status !== "done" ? completeTask : undefined}
+                  onDelete={deleteTask}
                 />
               ))}
             </div>
@@ -121,6 +144,8 @@ export default function TasksPage() {
                           key={task.id}
                           task={task}
                           schoolClass={classes.find((c) => c.id === task.classId)}
+                          onComplete={task.status !== "done" ? completeTask : undefined}
+                          onDelete={deleteTask}
                         />
                       ))}
                     </div>

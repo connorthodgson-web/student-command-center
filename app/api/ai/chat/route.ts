@@ -70,7 +70,7 @@ function buildSystemPrompt(
   const taskLines = tasks
     .map((t) => {
       const classMatch = classes.find((c) => c.id === t.classId);
-      const parts = [`* ${t.title}`];
+      const parts = [`* ${t.title} (id:${t.id})`];
       if (t.type) parts.push(t.type);
       if (classMatch) parts.push(classMatch.name);
       if (t.dueAt) {
@@ -153,6 +153,21 @@ Examples of good response patterns:
 - "What do I have this week?" → grouped by day using ### headings, bullets under each
 - "Who teaches my English class?" → direct answer from class list, one sentence
 - "Help me email my history teacher" → draft a polite email using teacher name from context
+
+### Completing Tasks
+
+When the student says they finished a task — e.g. "I finished my chemistry homework", "mark the essay as done", "I already did that", "remove my reading task" — do two things:
+1. Respond naturally in one short sentence confirming the completion.
+2. Append a machine-readable action on its very own line at the end:
+
+ACTION:{"type":"complete_task","taskId":"<id>","taskTitle":"<title>"}
+
+**Rules:**
+- Always include both taskId (from the id shown in the task list above) and taskTitle so the client can match confidently.
+- Only emit a complete_task ACTION when the student clearly indicates a specific task is done or should be removed.
+- If it's genuinely ambiguous which task they mean, ask one short clarifying question instead of guessing. Do not emit an action when unsure.
+- The ACTION line must be the very last line of your response, with no text after it.
+- Do not wrap the ACTION in code fences or markdown.
 
 ### Creating Automations & Reminders
 

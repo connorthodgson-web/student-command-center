@@ -6,6 +6,8 @@ import { ScheduleSetupInput } from "../../components/ScheduleSetupInput";
 import { SectionHeader } from "../../components/SectionHeader";
 import { useClasses } from "../../lib/stores/classStore";
 import { formatTimeRange } from "../../lib/schedule";
+import { detectApCourse } from "../../lib/ap-detection";
+import { getApTemplate } from "../../lib/ap-course-templates";
 import type { ClassMeetingTime, SchoolClass, Weekday } from "../../types";
 
 type ClassesView = "cards" | "schedule";
@@ -34,13 +36,16 @@ const WEEKDAYS: { label: string; value: Weekday }[] = [
 type DayTime = { start: string; end: string };
 
 export default function ClassesPage() {
-  const { classes, loading, addClass, addClasses, deleteClass } = useClasses();
+  const { classes, loading, addClass, addClasses, updateClass, deleteClass } = useClasses();
 
   const [view, setView] = useState<ClassesView>("schedule");
   const [setupVisible, setSetupVisible] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const hasInitializedSetup = useRef(false);
+
+  // Class Knowledge modal
+  const [knowledgeClass, setKnowledgeClass] = useState<SchoolClass | null>(null);
 
   const [name, setName] = useState("");
   const [teacherName, setTeacherName] = useState("");
@@ -133,6 +138,7 @@ export default function ClassesPage() {
     }
 
     try {
+      const apInfo = detectApCourse(name.trim());
       await addClass({
         name: name.trim(),
         teacherName: teacherName.trim() || undefined,
@@ -145,6 +151,8 @@ export default function ClassesPage() {
         notes: notes.trim() || undefined,
         color,
         scheduleLabel: scheduleLabel || undefined,
+        isApCourse: apInfo.isApCourse || undefined,
+        apCourseKey: apInfo.apCourseKey ?? undefined,
       });
 
       resetForm();
@@ -513,13 +521,14 @@ export default function ClassesPage() {
               key={schoolClass.id}
               schoolClass={schoolClass}
               onDelete={() => void deleteClass(schoolClass.id)}
+              onKnowledge={() => setKnowledgeClass(schoolClass)}
             />
           ))}
         </div>
       )}
 
       {!loading && hasClasses && view === "schedule" && (
-        <DayTypeScheduleView classes={classes} />
+        <DayTypeScheduleView classes={classes} onKnowledge={setKnowledgeClass} />
       )}
 
       {!loading && !hasClasses && !setupVisible && (
@@ -535,6 +544,17 @@ export default function ClassesPage() {
             Describe my schedule
           </button>
         </div>
+      )}
+
+      {knowledgeClass && (
+        <ClassKnowledgeModal
+          schoolClass={knowledgeClass}
+          onSave={async (updates) => {
+            await updateClass(knowledgeClass.id, updates);
+            setKnowledgeClass(null);
+          }}
+          onClose={() => setKnowledgeClass(null)}
+        />
       )}
     </main>
   );
@@ -558,10 +578,17 @@ function sortByStartTime(a: SchoolClass, b: SchoolClass): number {
   return aTime.localeCompare(bTime);
 }
 
-function ScheduleBlockRow({ cls }: { cls: SchoolClass }) {
+function ScheduleBlockRow({
+  cls,
+  onKnowledge,
+}: {
+  cls: SchoolClass;
+  onKnowledge?: (cls: SchoolClass) => void;
+}) {
   const timeStr = cls.startTime
     ? formatTimeRange(cls.startTime, cls.endTime)
     : null;
+  const hasKnowledge = !!(cls.syllabusText || cls.classNotes || cls.isApCourse);
 
   return (
     <div className="flex items-stretch gap-0 py-3 border-b border-border/50 last:border-0">
@@ -574,14 +601,37 @@ function ScheduleBlockRow({ cls }: { cls: SchoolClass }) {
       {/* Class info */}
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <span className="text-sm font-semibold text-foreground leading-snug">
-            {cls.name}
-          </span>
-          {timeStr && (
-            <span className="shrink-0 text-sm font-medium text-foreground tabular-nums">
-              {timeStr}
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <span className="text-sm font-semibold text-foreground leading-snug">
+              {cls.name}
             </span>
-          )}
+            {cls.isApCourse && (
+              <span className="inline-flex items-center rounded-full bg-accent-amber px-2 py-0.5 text-[10px] font-semibold text-accent-amber-foreground">
+                AP
+              </span>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {timeStr && (
+              <span className="text-sm font-medium text-foreground tabular-nums">
+                {timeStr}
+              </span>
+            )}
+            {onKnowledge && (
+              <button
+                type="button"
+                onClick={() => onKnowledge(cls)}
+                title="Class knowledge"
+                className={`rounded-full p-1 transition-colors hover:bg-surface ${
+                  hasKnowledge ? "text-accent-green-foreground" : "text-muted hover:text-foreground"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
@@ -597,7 +647,13 @@ function ScheduleBlockRow({ cls }: { cls: SchoolClass }) {
 
 type DayLabel = NonNullable<SchoolClass["scheduleLabel"]>;
 
-function DayTypeScheduleView({ classes }: { classes: SchoolClass[] }) {
+function DayTypeScheduleView({
+  classes,
+  onKnowledge,
+}: {
+  classes: SchoolClass[];
+  onKnowledge?: (cls: SchoolClass) => void;
+}) {
   // Collect unique day labels dynamically (supports A, B, or any future label)
   const dayLabels: DayLabel[] = Array.from(
     new Set(
@@ -629,7 +685,7 @@ function DayTypeScheduleView({ classes }: { classes: SchoolClass[] }) {
           {everyday.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted">No classes yet.</p>
           ) : (
-            everyday.map((cls) => <ScheduleBlockRow key={cls.id} cls={cls} />)
+            everyday.map((cls) => <ScheduleBlockRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />)
           )}
         </div>
       </div>
@@ -687,7 +743,7 @@ function DayTypeScheduleView({ classes }: { classes: SchoolClass[] }) {
         ) : (
           <>
             {rotationClasses.map((cls) => (
-              <ScheduleBlockRow key={cls.id} cls={cls} />
+              <ScheduleBlockRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />
             ))}
             {everyday.length > 0 && rotationClasses.length > 0 && (
               <div className="my-1 flex items-center gap-3">
@@ -699,10 +755,163 @@ function DayTypeScheduleView({ classes }: { classes: SchoolClass[] }) {
               </div>
             )}
             {everyday.map((cls) => (
-              <ScheduleBlockRow key={cls.id} cls={cls} />
+              <ScheduleBlockRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />
             ))}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Class Knowledge Modal ───────────────────────────────────────────────────
+
+type ClassKnowledgeModalProps = {
+  schoolClass: SchoolClass;
+  onSave: (updates: Partial<Omit<SchoolClass, "id">>) => Promise<void>;
+  onClose: () => void;
+};
+
+function ClassKnowledgeModal({ schoolClass, onSave, onClose }: ClassKnowledgeModalProps) {
+  const [syllabusText, setSyllabusText] = useState(schoolClass.syllabusText ?? "");
+  const [classNotes, setClassNotes] = useState(schoolClass.classNotes ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const apTemplate = schoolClass.isApCourse && schoolClass.apCourseKey
+    ? getApTemplate(schoolClass.apCourseKey)
+    : null;
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave({
+        syllabusText: syllabusText.trim() || undefined,
+        classNotes: classNotes.trim() || undefined,
+      });
+    } catch {
+      setError("Failed to save. Please try again.");
+      setSaving(false);
+    }
+  };
+
+  const textareaClass =
+    "w-full resize-none rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-xl">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold text-foreground truncate">{schoolClass.name}</h2>
+              {schoolClass.isApCourse && (
+                <span className="inline-flex items-center rounded-full bg-accent-amber px-2 py-0.5 text-[10px] font-semibold text-accent-amber-foreground shrink-0">
+                  AP
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-muted">
+              Class Knowledge — helps the assistant give smarter, class-specific answers
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-full p-1 text-muted transition-colors hover:bg-surface hover:text-foreground"
+            aria-label="Close"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* AP template info */}
+        {apTemplate && (
+          <div className="mx-6 mt-4 rounded-xl border border-accent-amber/40 bg-accent-amber/10 px-4 py-3">
+            <p className="text-xs font-semibold text-accent-amber-foreground">{apTemplate.officialName}</p>
+            <p className="mt-0.5 text-xs text-muted">{apTemplate.description}</p>
+            <p className="mt-1.5 text-xs text-muted">
+              <span className="font-medium text-foreground">Key topics:</span>{" "}
+              {apTemplate.units.slice(0, 4).join(", ")}{apTemplate.units.length > 4 ? "…" : ""}
+            </p>
+          </div>
+        )}
+
+        {schoolClass.isApCourse && !apTemplate && (
+          <div className="mx-6 mt-4 rounded-xl border border-accent-amber/40 bg-accent-amber/10 px-4 py-3">
+            <p className="text-xs text-muted">
+              AP course detected. No built-in template available — add your syllabus below for the best assistant experience.
+            </p>
+          </div>
+        )}
+
+        {/* Fields */}
+        <div className="space-y-4 px-6 py-4">
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-foreground">
+              Syllabus / course overview
+              <span className="ml-1.5 text-xs font-normal text-muted">(optional)</span>
+            </span>
+            <textarea
+              value={syllabusText}
+              onChange={(e) => setSyllabusText(e.target.value)}
+              placeholder="Paste key parts of your syllabus — topics covered, grading breakdown, important policies…"
+              rows={4}
+              className={textareaClass}
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-foreground">
+              Your notes about this class
+              <span className="ml-1.5 text-xs font-normal text-muted">(optional)</span>
+            </span>
+            <textarea
+              value={classNotes}
+              onChange={(e) => setClassNotes(e.target.value)}
+              placeholder="Anything the assistant should know — study tips, how the teacher grades, what topics are hardest…"
+              rows={3}
+              className={textareaClass}
+            />
+          </label>
+
+          {error && (
+            <p className="rounded-xl border border-accent-rose bg-accent-rose px-4 py-2.5 text-sm text-accent-rose-foreground">
+              {error}
+            </p>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 border-t border-border px-6 py-4">
+          <p className="text-xs text-muted">
+            This info is only used to help the assistant answer questions about this class.
+          </p>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition hover:bg-surface"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded-full bg-accent-green-foreground px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

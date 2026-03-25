@@ -14,6 +14,10 @@ export type DbClassRow = {
   meetings: ClassMeetingTime[] | null;
   schedule_label: "A" | "B" | null;
   notes: string | null;
+  syllabus_text: string | null;
+  class_notes: string | null;
+  is_ap_course: boolean | null;
+  ap_course_key: string | null;
   created_at: string;
 };
 
@@ -35,6 +39,10 @@ export function mapDbClassToSchoolClass(row: DbClassRow): SchoolClass {
     meetings: row.meetings ?? undefined,
     scheduleLabel: row.schedule_label ?? undefined,
     notes: row.notes ?? undefined,
+    syllabusText: row.syllabus_text ?? undefined,
+    classNotes: row.class_notes ?? undefined,
+    isApCourse: row.is_ap_course ?? undefined,
+    apCourseKey: row.ap_course_key ?? undefined,
   };
 }
 
@@ -58,6 +66,10 @@ export function mapSchoolClassToInsert(
         : null,
     schedule_label: schoolClass.scheduleLabel ?? null,
     notes: emptyToNull(schoolClass.notes),
+    syllabus_text: emptyToNull(schoolClass.syllabusText),
+    class_notes: emptyToNull(schoolClass.classNotes),
+    is_ap_course: schoolClass.isApCourse ?? null,
+    ap_course_key: schoolClass.apCourseKey ?? null,
   };
 }
 
@@ -97,6 +109,18 @@ export function mapSchoolClassToUpdate(updates: ClassUpdate) {
   }
   if ("notes" in updates) {
     payload.notes = emptyToNull(updates.notes);
+  }
+  if ("syllabusText" in updates) {
+    payload.syllabus_text = emptyToNull(updates.syllabusText);
+  }
+  if ("classNotes" in updates) {
+    payload.class_notes = emptyToNull(updates.classNotes);
+  }
+  if ("isApCourse" in updates) {
+    payload.is_ap_course = updates.isApCourse ?? null;
+  }
+  if ("apCourseKey" in updates) {
+    payload.ap_course_key = updates.apCourseKey ?? null;
   }
 
   return payload;

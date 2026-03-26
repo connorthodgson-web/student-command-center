@@ -4,17 +4,20 @@
 import { useState } from "react";
 import { SectionHeader } from "../../components/SectionHeader";
 import { TaskCapture } from "../../components/TaskCapture";
+import { ManualTaskForm } from "../../components/ManualTaskForm";
 import { TaskCard } from "../../components/TaskCard";
 import { useClasses } from "../../lib/stores/classStore";
 import { useTaskStore } from "../../lib/task-store";
 import { sortTasksByDueDate } from "../../lib/tasks";
 
 type ViewMode = "timeline" | "by-class";
+type AddMode = "smart" | "manual";
 
 export default function TasksPage() {
   const { classes } = useClasses();
   const { tasks, removingIds, addTask, completeTask, deleteTask } = useTaskStore();
   const [viewMode, setViewMode] = useState<ViewMode>("timeline");
+  const [addMode, setAddMode] = useState<AddMode>("smart");
   const [showCompleted, setShowCompleted] = useState(false);
 
   const allSorted = sortTasksByDueDate(tasks);
@@ -69,12 +72,47 @@ export default function TasksPage() {
 
       {/* Task capture */}
       <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-foreground">Add a Task</h2>
-        <p className="mt-1 text-sm text-muted">
-          Type naturally — &quot;Bio test Friday&quot; or &quot;English essay due tomorrow at 11pm&quot;.
-        </p>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Add a Task</h2>
+            <p className="mt-1 text-sm text-muted">
+              {addMode === "smart"
+                ? "Type naturally — \"Bio test Friday\" or \"English essay due tomorrow at 11pm\"."
+                : "Fill in the details directly — no AI needed."}
+            </p>
+          </div>
+          {/* Mode toggle */}
+          <div className="flex shrink-0 rounded-xl border border-border bg-surface p-0.5">
+            <button
+              type="button"
+              onClick={() => setAddMode("smart")}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                addMode === "smart"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              Smart
+            </button>
+            <button
+              type="button"
+              onClick={() => setAddMode("manual")}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                addMode === "manual"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              Manual
+            </button>
+          </div>
+        </div>
         <div className="mt-4">
-          <TaskCapture onTaskAdded={addTask} />
+          {addMode === "smart" ? (
+            <TaskCapture onTaskAdded={addTask} />
+          ) : (
+            <ManualTaskForm onTaskAdded={addTask} />
+          )}
         </div>
       </section>
 

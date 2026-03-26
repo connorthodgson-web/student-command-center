@@ -8,6 +8,14 @@ export async function POST(request: Request) {
     profile?: StudentProfile;
   };
 
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("[AI Today Focus] OPENAI_API_KEY is not set.");
+    return NextResponse.json(
+      { error: "AI is not configured. Set OPENAI_API_KEY in your environment." },
+      { status: 503 }
+    );
+  }
+
   if (!body.contextText) {
     return NextResponse.json({ error: "contextText is required." }, { status: 400 });
   }

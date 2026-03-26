@@ -18,6 +18,20 @@ export interface ClassMeetingTime {
   endTime: string;   // "HH:MM" 24-hour
 }
 
+/**
+ * Metadata for a file attached to a class.
+ * The file itself is stored externally (e.g. cloud storage);
+ * this record tracks identity and provenance only.
+ */
+export interface ClassFile {
+  id: string;
+  name: string;
+  /** MIME type or loose category, e.g. "application/pdf", "image/png" */
+  type: string;
+  /** ISO timestamp when the file was attached */
+  createdAt: string;
+}
+
 export interface SchoolClass {
   id: string;
   name: string;
@@ -53,6 +67,12 @@ export interface SchoolClass {
   isApCourse?: boolean;
   /** Key into AP_COURSE_TEMPLATES for built-in AP knowledge pack. Null if AP but no template match. */
   apCourseKey?: string | null;
+  /**
+   * Files attached to this class (syllabus PDFs, handouts, etc.).
+   * Stores metadata only — actual file content lives in cloud storage.
+   * Upload UI and storage integration are not yet implemented.
+   */
+  files?: ClassFile[];
 }
 
 export type TaskStatus = "todo" | "in_progress" | "done";
@@ -92,6 +112,8 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   createdAt: string;
+  /** Set to true when the message represents a failed AI response. */
+  failed?: boolean;
 }
 
 /**

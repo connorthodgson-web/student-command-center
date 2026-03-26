@@ -1,232 +1,30 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { ScheduleCard } from "../../components/ScheduleCard";
-import { ScheduleSetupInput } from "../../components/ScheduleSetupInput";
+import { useState } from "react";
 import { SectionHeader } from "../../components/SectionHeader";
 import { useClasses } from "../../lib/stores/classStore";
 import { formatTimeRange } from "../../lib/schedule";
-import { detectApCourse } from "../../lib/ap-detection";
 import { getApTemplate } from "../../lib/ap-course-templates";
-import type { ClassMeetingTime, SchoolClass, Weekday } from "../../types";
-
-type ClassesView = "cards" | "schedule";
-
-type ScheduleLabel = "A" | "B" | "";
-
-const COLOR_SWATCHES: { label: string; value: string }[] = [
-  { label: "Green", value: "#d4edd9" },
-  { label: "Blue", value: "#d4e6f7" },
-  { label: "Amber", value: "#fdefd3" },
-  { label: "Rose", value: "#fde0e0" },
-  { label: "Lavender", value: "#ebe0fd" },
-  { label: "Slate", value: "#dde3e8" },
-];
-
-const WEEKDAYS: { label: string; value: Weekday }[] = [
-  { label: "Mon", value: "monday" },
-  { label: "Tue", value: "tuesday" },
-  { label: "Wed", value: "wednesday" },
-  { label: "Thu", value: "thursday" },
-  { label: "Fri", value: "friday" },
-  { label: "Sat", value: "saturday" },
-  { label: "Sun", value: "sunday" },
-];
-
-type DayTime = { start: string; end: string };
+import type { SchoolClass } from "../../types";
 
 export default function ClassesPage() {
-  const { classes, loading, addClass, addClasses, updateClass, deleteClass } = useClasses();
-
-  const [view, setView] = useState<ClassesView>("schedule");
-  const [setupVisible, setSetupVisible] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
-  const [mutationError, setMutationError] = useState<string | null>(null);
-  const hasInitializedSetup = useRef(false);
-
-  // Class Knowledge modal
+  const { classes, loading, updateClass } = useClasses();
   const [knowledgeClass, setKnowledgeClass] = useState<SchoolClass | null>(null);
-
-  // Editing state — when set, the manual form saves an update instead of a new class
-  const [editingClassId, setEditingClassId] = useState<string | null>(null);
-
-  const [name, setName] = useState("");
-  const [teacherName, setTeacherName] = useState("");
-  const [teacherEmail, setTeacherEmail] = useState("");
-  const [days, setDays] = useState<Weekday[]>([]);
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
-  const [usePerDayTimes, setUsePerDayTimes] = useState(false);
-  const [dayTimes, setDayTimes] = useState<Partial<Record<Weekday, DayTime>>>({});
-  const [room, setRoom] = useState("");
-  const [notes, setNotes] = useState("");
-  const [color, setColor] = useState(COLOR_SWATCHES[0].value);
-  const [scheduleLabel, setScheduleLabel] = useState<ScheduleLabel>("");
-  const [validationError, setValidationError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (loading || hasInitializedSetup.current) return;
-    setSetupVisible(classes.length === 0);
-    hasInitializedSetup.current = true;
-  }, [loading, classes.length]);
-
-  const toggleDay = (day: Weekday) => {
-    setDays((prev) => {
-      if (prev.includes(day)) {
-        setDayTimes((dt) => {
-          const next = { ...dt };
-          delete next[day];
-          return next;
-        });
-        return prev.filter((d) => d !== day);
-      }
-
-      setDayTimes((dt) => ({
-        ...dt,
-        [day]: { start: startTime || "08:00", end: endTime || "09:00" },
-      }));
-      return [...prev, day];
-    });
-  };
-
-  const updateDayTime = (day: Weekday, field: "start" | "end", value: string) => {
-    setDayTimes((dt) => ({ ...dt, [day]: { ...dt[day], [field]: value } as DayTime }));
-  };
-
-  const resetForm = () => {
-    setName("");
-    setTeacherName("");
-    setTeacherEmail("");
-    setDays([]);
-    setStartTime("");
-    setEndTime("");
-    setUsePerDayTimes(false);
-    setDayTimes({});
-    setRoom("");
-    setNotes("");
-    setColor(COLOR_SWATCHES[0].value);
-    setScheduleLabel("");
-    setValidationError(null);
-    setMutationError(null);
-    setEditingClassId(null);
-  };
-
-  const loadClassIntoForm = (cls: SchoolClass) => {
-    setName(cls.name);
-    setTeacherName(cls.teacherName ?? "");
-    setTeacherEmail(cls.teacherEmail ?? "");
-    setRoom(cls.room ?? "");
-    setNotes(cls.notes ?? "");
-    setColor(cls.color ?? COLOR_SWATCHES[0].value);
-    setScheduleLabel((cls.scheduleLabel as ScheduleLabel) ?? "");
-    if (cls.meetings && cls.meetings.length > 0) {
-      setDays(cls.meetings.map((m) => m.day));
-      setUsePerDayTimes(true);
-      const dt: Partial<Record<Weekday, DayTime>> = {};
-      cls.meetings.forEach((m) => {
-        dt[m.day] = { start: m.startTime, end: m.endTime };
-      });
-      setDayTimes(dt);
-      setStartTime(cls.startTime ?? "");
-      setEndTime(cls.endTime ?? "");
-    } else {
-      setDays(cls.days ?? []);
-      setStartTime(cls.startTime ?? "");
-      setEndTime(cls.endTime ?? "");
-      setUsePerDayTimes(false);
-      setDayTimes({});
-    }
-    setValidationError(null);
-    setMutationError(null);
-    setEditingClassId(cls.id);
-    setFormOpen(true);
-  };
-
-  const handleManualSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-
-    if (!name.trim()) {
-      setValidationError("Class name is required.");
-      return;
-    }
-
-    if (!usePerDayTimes && startTime && endTime && startTime >= endTime) {
-      setValidationError("Start time must be before end time.");
-      return;
-    }
-
-    setValidationError(null);
-    setMutationError(null);
-
-    let meetings: ClassMeetingTime[] | undefined;
-    let canonicalStart = startTime;
-    let canonicalEnd = endTime;
-
-    if (usePerDayTimes && days.length > 0) {
-      meetings = days.map((day) => ({
-        day,
-        startTime: dayTimes[day]?.start ?? startTime ?? "08:00",
-        endTime: dayTimes[day]?.end ?? endTime ?? "09:00",
-      }));
-      canonicalStart = meetings[0]?.startTime ?? startTime;
-      canonicalEnd = meetings[0]?.endTime ?? endTime;
-    }
-
-    try {
-      const apInfo = detectApCourse(name.trim());
-      const classData = {
-        name: name.trim(),
-        teacherName: teacherName.trim() || undefined,
-        teacherEmail: teacherEmail.trim() || undefined,
-        days,
-        startTime: canonicalStart,
-        endTime: canonicalEnd,
-        meetings,
-        room: room.trim() || undefined,
-        notes: notes.trim() || undefined,
-        color,
-        scheduleLabel: scheduleLabel || undefined,
-        isApCourse: apInfo.isApCourse || undefined,
-        apCourseKey: apInfo.apCourseKey ?? undefined,
-      };
-
-      if (editingClassId) {
-        await updateClass(editingClassId, classData);
-      } else {
-        await addClass(classData);
-      }
-
-      resetForm();
-      setFormOpen(false);
-    } catch (err) {
-      setMutationError(err instanceof Error ? err.message : "Failed to save class.");
-    }
-  };
-
-  const handleManualCancel = () => {
-    resetForm();
-    setFormOpen(false);
-  };
-
-  const handleSchedulesConfirmed = async (
-    newClasses: Array<Omit<SchoolClass, "id">>
-  ) => {
-    await addClasses(newClasses);
-    setSetupVisible(false);
-  };
-
-  const inputClass =
-    "w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40";
-
-  const hasClasses = classes.length > 0;
-  const showActionBar = !loading && !setupVisible && !formOpen;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-10">
-      <SectionHeader
-        title="Classes"
-        description="Describe your schedule in plain English and the assistant will set it up for you."
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <SectionHeader
+          title="Classes"
+          description="Your schedule at a glance."
+        />
+        <a
+          href="/settings?tab=schedule"
+          className="shrink-0 self-center rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition hover:bg-surface hover:text-foreground"
+        >
+          Manage schedule
+        </a>
+      </div>
 
       {loading && (
         <div className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted shadow-sm">
@@ -234,359 +32,19 @@ export default function ClassesPage() {
         </div>
       )}
 
-      {!loading && setupVisible && (
-        <section className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-sm">
-          <div>
-            <p className="text-base font-semibold text-foreground">
-              Describe your full schedule
-            </p>
-            <p className="mt-1 text-sm text-muted">
-              Paste or type your classes in plain English - include times, days, and A/B rotation if your school uses it.
-              The assistant will parse everything and let you review before saving.
-            </p>
-          </div>
-
-          <ScheduleSetupInput
-            existingClasses={classes}
-            onConfirmed={handleSchedulesConfirmed}
-            onCancel={hasClasses ? () => setSetupVisible(false) : undefined}
-          />
-        </section>
-      )}
-
-      {showActionBar && (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setSetupVisible(true)}
-              className="rounded-full bg-accent-green-foreground px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-            >
-              + Build from description
-            </button>
-            <button
-              type="button"
-              onClick={() => setFormOpen(true)}
-              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition hover:bg-surface hover:text-foreground"
-            >
-              Add single class manually
-            </button>
-          </div>
-          {hasClasses && (
-            <div className="flex rounded-full border border-border bg-card p-0.5">
-              {(["schedule", "cards"] as ClassesView[]).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setView(v)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                    view === v
-                      ? "bg-foreground text-white"
-                      : "text-muted hover:text-foreground"
-                  }`}
-                >
-                  {v === "schedule" ? "Schedule" : "Cards"}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {!loading && formOpen && (
-        <section className="space-y-5 rounded-2xl border border-border bg-card p-6 shadow-sm">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">
-              {editingClassId ? "Edit class" : "Add a single class"}
-            </h2>
-            <p className="mt-0.5 text-sm text-muted">
-              Fill in what you know — everything except the class name is optional.
-            </p>
-          </div>
-
-          <form onSubmit={handleManualSubmit} className="space-y-5">
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-foreground">
-                Class name <span className="text-accent-rose-foreground">*</span>
-              </span>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. AP Chemistry"
-                className={inputClass}
-              />
-            </label>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-foreground">
-                  Teacher <span className="text-xs font-normal text-muted">(optional)</span>
-                </span>
-                <input
-                  type="text"
-                  value={teacherName}
-                  onChange={(e) => setTeacherName(e.target.value)}
-                  placeholder="e.g. Mr. Alvarez"
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-foreground">
-                  Teacher email <span className="text-xs font-normal text-muted">(optional)</span>
-                </span>
-                <input
-                  type="email"
-                  value={teacherEmail}
-                  onChange={(e) => setTeacherEmail(e.target.value)}
-                  placeholder="e.g. alvarez@school.edu"
-                  className={inputClass}
-                />
-              </label>
-            </div>
-
-            <fieldset>
-              <legend className="mb-2 text-sm font-medium text-foreground">
-                Meeting days <span className="text-xs font-normal text-muted">(optional)</span>
-              </legend>
-              <div className="flex flex-wrap gap-2">
-                {WEEKDAYS.map(({ label, value }) => (
-                  <label
-                    key={value}
-                    className={`flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
-                      days.includes(value)
-                        ? "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
-                        : "border-border bg-card text-muted hover:bg-surface"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={days.includes(value)}
-                      onChange={() => toggleDay(value)}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-
-            {days.length > 0 && (
-              <div className="space-y-4">
-                <label className="flex cursor-pointer items-center gap-2.5">
-                  <input
-                    type="checkbox"
-                    checked={usePerDayTimes}
-                    onChange={(e) => setUsePerDayTimes(e.target.checked)}
-                    className="h-4 w-4 rounded border-border accent-accent-green-foreground"
-                  />
-                  <span className="text-sm text-foreground">
-                    Different times on different days
-                    <span className="ml-1.5 text-xs text-muted">(e.g. lecture vs. lab)</span>
-                  </span>
-                </label>
-
-                {!usePerDayTimes && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <label className="block">
-                      <span className="mb-1.5 block text-sm font-medium text-foreground">
-                        Start time
-                      </span>
-                      <input
-                        type="time"
-                        value={startTime}
-                        onChange={(e) => setStartTime(e.target.value)}
-                        className={inputClass}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1.5 block text-sm font-medium text-foreground">
-                        End time
-                      </span>
-                      <input
-                        type="time"
-                        value={endTime}
-                        onChange={(e) => setEndTime(e.target.value)}
-                        className={inputClass}
-                      />
-                    </label>
-                  </div>
-                )}
-
-                {usePerDayTimes && (
-                  <div className="space-y-3 rounded-xl border border-border bg-surface p-4">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted">
-                      Times per day
-                    </p>
-                    {days.map((day) => {
-                      const dayLabel = WEEKDAYS.find((w) => w.value === day)?.label ?? day;
-                      return (
-                        <div key={day} className="flex items-center gap-3">
-                          <span className="w-9 shrink-0 text-sm font-medium text-foreground">
-                            {dayLabel}
-                          </span>
-                          <input
-                            type="time"
-                            value={dayTimes[day]?.start ?? ""}
-                            onChange={(e) => updateDayTime(day, "start", e.target.value)}
-                            className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40"
-                          />
-                          <span className="text-sm text-muted">-</span>
-                          <input
-                            type="time"
-                            value={dayTimes[day]?.end ?? ""}
-                            onChange={(e) => updateDayTime(day, "end", e.target.value)}
-                            className="rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground outline-none focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-foreground">
-                Room <span className="text-xs font-normal text-muted">(optional)</span>
-              </span>
-              <input
-                type="text"
-                value={room}
-                onChange={(e) => setRoom(e.target.value)}
-                placeholder="e.g. Room 204"
-                className={inputClass}
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-foreground">
-                Notes <span className="text-xs font-normal text-muted">(optional)</span>
-              </span>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="e.g. Grading policy, syllabus notes, office hours…"
-                rows={2}
-                className="w-full resize-none rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40"
-              />
-            </label>
-
-            <fieldset>
-              <legend className="mb-2 text-sm font-medium text-foreground">Color</legend>
-              <div className="flex flex-wrap gap-2">
-                {COLOR_SWATCHES.map((swatch) => (
-                  <button
-                    key={swatch.value}
-                    type="button"
-                    title={swatch.label}
-                    onClick={() => setColor(swatch.value)}
-                    style={{ backgroundColor: swatch.value }}
-                    className={`h-8 w-8 rounded-full border-2 transition ${
-                      color === swatch.value
-                        ? "scale-110 border-foreground"
-                        : "border-transparent hover:border-muted"
-                    }`}
-                  />
-                ))}
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend className="mb-2 text-sm font-medium text-foreground">
-                Rotating schedule <span className="text-xs font-normal text-muted">(optional)</span>
-              </legend>
-              <p className="mb-2.5 text-xs text-muted">
-                If your school uses A/B day rotation, label this class so the assistant knows which rotation it belongs to.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {(["", "A", "B"] as ScheduleLabel[]).map((label) => (
-                  <label
-                    key={label === "" ? "none" : label}
-                    className={`flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
-                      scheduleLabel === label
-                        ? label === "A"
-                          ? "border-accent-blue-foreground bg-accent-blue font-medium text-accent-blue-foreground"
-                          : label === "B"
-                            ? "border-accent-purple-foreground bg-accent-purple font-medium text-accent-purple-foreground"
-                            : "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
-                        : "border-border bg-card text-muted hover:bg-surface"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="scheduleLabel"
-                      className="sr-only"
-                      checked={scheduleLabel === label}
-                      onChange={() => setScheduleLabel(label)}
-                    />
-                    {label === "" ? "No rotation" : `${label}-Day`}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-
-            {validationError && (
-              <p className="rounded-xl border border-accent-rose bg-accent-rose px-4 py-2.5 text-sm text-accent-rose-foreground">
-                {validationError}
-              </p>
-            )}
-
-            {mutationError && (
-              <p className="rounded-xl border border-accent-rose bg-accent-rose px-4 py-2.5 text-sm text-accent-rose-foreground">
-                {mutationError}
-              </p>
-            )}
-
-            <div className="flex flex-wrap gap-3 pt-1">
-              <button
-                type="submit"
-                className="rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
-              >
-                {editingClassId ? "Save Changes" : "Add Class"}
-              </button>
-              <button
-                type="button"
-                onClick={handleManualCancel}
-                className="rounded-full border border-border px-5 py-2.5 text-sm font-medium text-foreground transition hover:bg-surface"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
-
-      {!loading && hasClasses && view === "cards" && (
-        <div className="grid gap-4 md:grid-cols-2">
-          {classes.map((schoolClass) => (
-            <ScheduleCard
-              key={schoolClass.id}
-              schoolClass={schoolClass}
-              onEdit={() => loadClassIntoForm(schoolClass)}
-              onDelete={() => void deleteClass(schoolClass.id)}
-              onKnowledge={() => setKnowledgeClass(schoolClass)}
-            />
-          ))}
-        </div>
-      )}
-
-      {!loading && hasClasses && view === "schedule" && (
+      {!loading && classes.length > 0 && (
         <DayTypeScheduleView classes={classes} onKnowledge={setKnowledgeClass} />
       )}
 
-      {!loading && !hasClasses && !setupVisible && (
+      {!loading && classes.length === 0 && (
         <div className="space-y-4 rounded-2xl border border-dashed border-border bg-card p-10 text-center">
-          <p className="text-sm text-muted">
-            No classes yet. Describe your schedule above and the assistant will set it all up for you.
-          </p>
-          <button
-            type="button"
-            onClick={() => setSetupVisible(true)}
-            className="rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+          <p className="text-sm text-muted">No classes yet.</p>
+          <a
+            href="/settings?tab=schedule"
+            className="inline-block rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
           >
-            Describe my schedule
-          </button>
+            Set up my schedule
+          </a>
         </div>
       )}
 
@@ -632,14 +90,60 @@ function getClassDisplayTime(
 }
 
 function hourLabel(totalMinutes: number): string {
-  const h = Math.floor(totalMinutes / 60);
+  const h = Math.floor(totalMinutes / 60) % 24;
   const suffix = h >= 12 ? "PM" : "AM";
   const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${display}${suffix}`;
+  return `${display} ${suffix}`;
 }
 
-const PX_PER_MIN = 1.2; // 72px per hour — readable without being too tall
-const TOP_PAD = 20; // px above first hour line
+// ─── Overlap layout ───────────────────────────────────────────────────────────
+// Groups overlapping class blocks into "clusters" and assigns each a column
+// so they render side-by-side instead of stacking invisibly on top of each other.
+
+type TimedEntry = { cls: SchoolClass; time: { startMin: number; endMin: number } };
+type LayedOut   = TimedEntry & { col: number; colCount: number };
+
+function layoutBlocks(entries: TimedEntry[]): LayedOut[] {
+  if (entries.length === 0) return [];
+
+  // Work with a copy sorted by start time
+  const sorted = [...entries].sort((a, b) => a.time.startMin - b.time.startMin);
+  const result: LayedOut[] = [];
+  let i = 0;
+
+  while (i < sorted.length) {
+    // Expand the overlap cluster: keep extending while the next event starts
+    // before the current cluster ends.
+    let clusterEnd = sorted[i].time.endMin;
+    let j = i + 1;
+    while (j < sorted.length && sorted[j].time.startMin < clusterEnd) {
+      clusterEnd = Math.max(clusterEnd, sorted[j].time.endMin);
+      j++;
+    }
+    const group = sorted.slice(i, j);
+
+    // Greedily assign columns within the cluster
+    const colEnds: number[] = [];
+    const assigned = group.map((entry) => {
+      let col = colEnds.findIndex((end) => end <= entry.time.startMin);
+      if (col === -1) col = colEnds.length;
+      colEnds[col] = entry.time.endMin;
+      return { ...entry, col };
+    });
+
+    const colCount = colEnds.length;
+    assigned.forEach((e) => result.push({ ...e, colCount }));
+    i = j;
+  }
+
+  return result;
+}
+
+const PX_PER_MIN = 1.4; // 84 px per hour — clear spacing
+const TOP_PAD = 28;     // px above first hour line
+const BOTTOM_PAD = 32;  // px below last hour line
+const BLOCK_GAP = 3;    // px gap between stacked/adjacent blocks
+const MIN_BLOCK_PX = 36; // minimum block height in px
 
 // ─── Schedule timeline ────────────────────────────────────────────────────────
 
@@ -653,8 +157,6 @@ function ScheduleTimeline({
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-  type TimedEntry = { cls: SchoolClass; time: { startMin: number; endMin: number } };
-
   const timedEntries: TimedEntry[] = classes
     .map((cls) => {
       const time = getClassDisplayTime(cls);
@@ -665,90 +167,114 @@ function ScheduleTimeline({
 
   const untimedClasses = classes.filter((cls) => !getClassDisplayTime(cls));
 
+  // ── All classes lack times → skip the grid entirely ────────────────────────
   if (timedEntries.length === 0) {
     return (
-      <div className="divide-y divide-border/50 px-5">
-        {untimedClasses.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted">No classes yet.</p>
+      <div className="px-5 py-5">
+        {untimedClasses.length > 0 ? (
+          <UntimedSection classes={untimedClasses} onKnowledge={onKnowledge} />
         ) : (
-          untimedClasses.map((cls) => (
-            <UntimedClassRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />
-          ))
+          <p className="py-8 text-center text-sm text-muted">No classes to display.</p>
         )}
       </div>
     );
   }
 
-  const allMins = timedEntries.flatMap((e) => [e.time.startMin, e.time.endMin]);
+  // ── Layout ─────────────────────────────────────────────────────────────────
+  const laidOut = layoutBlocks(timedEntries);
+
+  const allMins    = timedEntries.flatMap((e) => [e.time.startMin, e.time.endMin]);
   const dayStartMin = Math.floor(Math.min(...allMins) / 60) * 60;
-  const dayEndMin = Math.ceil(Math.max(...allMins) / 60) * 60;
-  const totalMinutes = dayEndMin - dayStartMin;
-  const containerHeight = totalMinutes * PX_PER_MIN + TOP_PAD + 28;
+  const dayEndMin   = Math.ceil(Math.max(...allMins)  / 60) * 60;
+  const containerH  = (dayEndMin - dayStartMin) * PX_PER_MIN + TOP_PAD + BOTTOM_PAD;
+
+  // Shorthand: minutes → px top offset within the container
+  const toTop = (min: number) => (min - dayStartMin) * PX_PER_MIN + TOP_PAD;
 
   const hourMarkers: number[] = [];
-  for (let m = dayStartMin; m <= dayEndMin; m += 60) {
-    hourMarkers.push(m);
-  }
-  const nowInRange = nowMinutes >= dayStartMin && nowMinutes <= dayEndMin;
+  for (let m = dayStartMin; m <= dayEndMin; m += 60) hourMarkers.push(m);
+
+  // "Now" line is only meaningful when the current time falls inside the day range
+  const nowTop      = toTop(nowMinutes);
+  const nowInRange  = nowMinutes > dayStartMin && nowMinutes < dayEndMin;
 
   return (
     <div className="px-5 py-4">
       <div className="flex">
-        {/* Time axis */}
-        <div className="relative w-12 shrink-0 select-none" style={{ height: containerHeight }}>
+
+        {/* ── Time axis (48 px wide) ───────────────────────────────────────── */}
+        <div className="relative w-12 shrink-0 select-none" style={{ height: containerH }}>
           {hourMarkers.map((min) => (
             <div
               key={min}
-              className="absolute right-2 -translate-y-1/2 text-[10px] tabular-nums text-muted"
-              style={{ top: (min - dayStartMin) * PX_PER_MIN + TOP_PAD }}
+              className="absolute right-2 -translate-y-1/2 text-[10px] tabular-nums text-muted/60"
+              style={{ top: toTop(min) }}
             >
               {hourLabel(min)}
             </div>
           ))}
+
+          {/* Dot lives in the axis column so the line starts right at the grid edge */}
+          {nowInRange && (
+            <div
+              className="absolute right-0 z-20 translate-x-1/2 -translate-y-1/2"
+              style={{ top: nowTop }}
+            >
+              <div className="h-2.5 w-2.5 rounded-full bg-accent-green-foreground ring-2 ring-accent-green/40" />
+            </div>
+          )}
         </div>
 
-        {/* Grid + blocks */}
-        <div className="relative flex-1" style={{ height: containerHeight }}>
+        {/* ── Grid + class blocks ──────────────────────────────────────────── */}
+        <div className="relative min-w-0 flex-1" style={{ height: containerH }}>
+
           {/* Hour grid lines */}
           {hourMarkers.map((min) => (
             <div
               key={min}
-              className="absolute inset-x-0 border-t border-border/40"
-              style={{ top: (min - dayStartMin) * PX_PER_MIN + TOP_PAD }}
+              className="absolute inset-x-0 border-t border-border/30"
+              style={{ top: toTop(min) }}
             />
           ))}
 
-          {/* "Now" indicator line */}
+          {/* "Now" indicator — a clean horizontal rule across the whole grid */}
           {nowInRange && (
             <div
-              className="absolute inset-x-0 z-10 flex items-center"
-              style={{ top: (nowMinutes - dayStartMin) * PX_PER_MIN + TOP_PAD }}
-            >
-              <div className="h-2 w-2 shrink-0 -ml-1 rounded-full bg-accent-green-foreground" />
-              <div className="flex-1 border-t-2 border-accent-green-foreground/50" />
-            </div>
+              className="absolute inset-x-0 z-10 border-t-2 border-accent-green-foreground/50"
+              style={{ top: nowTop }}
+            />
           )}
 
           {/* Class blocks */}
-          {timedEntries.map(({ cls, time }) => {
-            const top = (time.startMin - dayStartMin) * PX_PER_MIN + TOP_PAD;
-            const rawHeight = (time.endMin - time.startMin) * PX_PER_MIN;
-            const height = Math.max(rawHeight - 4, 28);
-            const duration = time.endMin - time.startMin;
-            const dotColor = cls.color ?? "#d4edd9";
+          {laidOut.map(({ cls, time, col, colCount }) => {
+            const blockTop    = toTop(time.startMin) + BLOCK_GAP;
+            const rawH        = (time.endMin - time.startMin) * PX_PER_MIN;
+            const blockH      = Math.max(rawH - BLOCK_GAP, MIN_BLOCK_PX);
+            const duration    = time.endMin - time.startMin;
+            const dotColor    = cls.color ?? "#d4edd9";
+            const isActive    = nowMinutes >= time.startMin && nowMinutes < time.endMin;
 
-            const startStr =
-              cls.startTime || (cls.meetings?.[0]?.startTime ?? "");
-            const endStr = cls.endTime || (cls.meetings?.[0]?.endTime ?? "");
+            // Overlap column geometry (percentage-based, with small pixel gap)
+            const colW   = 100 / colCount;
+            const leftPct = col * colW;
+            const gapL   = col > 0           ? 2 : 0; // px gap on left  edge
+            const gapR   = col < colCount - 1 ? 2 : 0; // px gap on right edge
+
+            const startStr = cls.startTime || (cls.meetings?.[0]?.startTime ?? "");
+            const endStr   = cls.endTime   || (cls.meetings?.[0]?.endTime   ?? "");
 
             return (
               <div
                 key={cls.id}
-                className="group absolute left-0 right-0 overflow-hidden rounded-xl border-l-4 transition-shadow hover:shadow-sm"
+                className={`group absolute overflow-hidden rounded-xl border-l-4 transition-shadow hover:shadow-md ${
+                  isActive ? "ring-1 ring-inset ring-accent-green-foreground/25" : ""
+                }`}
                 style={{
-                  top: top + 2,
-                  height,
-                  backgroundColor: `${dotColor}30`,
+                  top:    blockTop,
+                  height: blockH,
+                  left:   `calc(${leftPct}% + ${gapL}px)`,
+                  right:  `calc(${100 - leftPct - colW}% + ${gapR}px)`,
+                  backgroundColor: `${dotColor}${isActive ? "40" : "28"}`,
                   borderLeftColor: dotColor,
                 }}
               >
@@ -758,7 +284,15 @@ function ScheduleTimeline({
                       <span className="truncate text-xs font-semibold leading-tight text-foreground">
                         {cls.name}
                       </span>
-                      {cls.scheduleLabel && (
+
+                      {/* "Now" pill — only shown on the active block */}
+                      {isActive && (
+                        <span className="shrink-0 rounded-full bg-accent-green/30 px-1.5 py-px text-[9px] font-bold text-accent-green-foreground">
+                          now
+                        </span>
+                      )}
+
+                      {cls.scheduleLabel && !isActive && (
                         <span
                           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
                             cls.scheduleLabel === "A"
@@ -775,7 +309,8 @@ function ScheduleTimeline({
                         </span>
                       )}
                     </div>
-                    {duration >= 45 && (cls.teacherName || cls.room) && (
+
+                    {duration >= 40 && (cls.teacherName || cls.room) && (
                       <p className="mt-0.5 truncate text-[10px] text-muted">
                         {[cls.teacherName, cls.room].filter(Boolean).join(" · ")}
                       </p>
@@ -786,6 +321,7 @@ function ScheduleTimeline({
                       </p>
                     )}
                   </div>
+
                   {onKnowledge && (
                     <button
                       type="button"
@@ -803,69 +339,107 @@ function ScheduleTimeline({
                     </button>
                   )}
                 </div>
+
+                {/* Progress bar at the bottom of an active block */}
+                {isActive && time.endMin > time.startMin && (
+                  <div className="absolute inset-x-0 bottom-0 h-0.5 bg-black/5">
+                    <div
+                      className="h-full rounded-full bg-accent-green-foreground/50"
+                      style={{
+                        width: `${Math.min(100, ((nowMinutes - time.startMin) / (time.endMin - time.startMin)) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Untimed classes below timeline */}
+      {/* Untimed classes — shown below the grid */}
       {untimedClasses.length > 0 && (
-        <div className="mt-6 border-t border-border/40 pt-4">
-          <p className="mb-3 text-[10px] uppercase tracking-widest text-muted">No time set</p>
-          <div className="divide-y divide-border/50">
-            {untimedClasses.map((cls) => (
-              <UntimedClassRow key={cls.id} cls={cls} onKnowledge={onKnowledge} />
-            ))}
-          </div>
-        </div>
+        <UntimedSection
+          classes={untimedClasses}
+          onKnowledge={onKnowledge}
+          className="mt-6 border-t border-border/40 pt-4"
+        />
       )}
     </div>
   );
 }
 
-// Simple row for classes that have no time — used below the timeline
-function UntimedClassRow({
-  cls,
+// ─── Untimed section ─────────────────────────────────────────────────────────
+// Renders classes that have no times as a clean list below (or instead of) the grid.
+
+function UntimedSection({
+  classes,
   onKnowledge,
+  className = "",
 }: {
-  cls: SchoolClass;
+  classes: SchoolClass[];
   onKnowledge?: (cls: SchoolClass) => void;
+  className?: string;
 }) {
-  const hasKnowledge = !!(cls.syllabusText || cls.classNotes || cls.isApCourse);
   return (
-    <div className="flex items-center gap-3 py-3">
-      <div
-        className="h-2 w-2 shrink-0 rounded-full"
-        style={{ backgroundColor: cls.color ?? "#d4edd9" }}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-sm font-semibold text-foreground">{cls.name}</span>
-          {cls.isApCourse && (
-            <span className="rounded-full bg-accent-amber px-2 py-0.5 text-[10px] font-semibold text-accent-amber-foreground">
-              AP
-            </span>
-          )}
-        </div>
-        <p className="mt-0.5 text-xs text-muted italic">
-          {[cls.teacherName, cls.room].filter(Boolean).join(" · ") || "Time not set"}
-        </p>
+    <div className={className}>
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted/60">
+        No time set
+      </p>
+      <div className="space-y-px">
+        {classes.map((cls) => {
+          const hasKnowledge = !!(cls.syllabusText || cls.classNotes || cls.isApCourse);
+          return (
+            <div
+              key={cls.id}
+              className="group flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-surface/60"
+            >
+              <div
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: cls.color ?? "#d4edd9" }}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-sm font-semibold text-foreground">{cls.name}</span>
+                  {cls.scheduleLabel && (
+                    <span
+                      className={`rounded-full px-1.5 py-px text-[9px] font-bold ${
+                        cls.scheduleLabel === "A"
+                          ? "bg-accent-blue text-accent-blue-foreground"
+                          : "bg-accent-purple text-accent-purple-foreground"
+                      }`}
+                    >
+                      {cls.scheduleLabel}
+                    </span>
+                  )}
+                  {cls.isApCourse && (
+                    <span className="rounded-full bg-accent-amber px-1.5 py-px text-[9px] font-bold text-accent-amber-foreground">
+                      AP
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-xs text-muted">
+                  {[cls.teacherName, cls.room].filter(Boolean).join(" · ") || "No time or room set"}
+                </p>
+              </div>
+              {onKnowledge && (
+                <button
+                  type="button"
+                  onClick={() => onKnowledge(cls)}
+                  title="Class knowledge"
+                  className={`shrink-0 rounded-full p-1 opacity-0 transition-all group-hover:opacity-100 hover:bg-surface ${
+                    hasKnowledge ? "text-accent-green-foreground" : "text-muted"
+                  }`}
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
-      {onKnowledge && (
-        <button
-          type="button"
-          onClick={() => onKnowledge(cls)}
-          title="Class knowledge"
-          className={`shrink-0 rounded-full p-1 transition-colors hover:bg-surface ${
-            hasKnowledge ? "text-accent-green-foreground" : "text-muted hover:text-foreground"
-          }`}
-        >
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-          </svg>
-        </button>
-      )}
     </div>
   );
 }

@@ -123,6 +123,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_GREETING]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [failedInput, setFailedInput] = useState<string | null>(null);
   const profile = loadProfile();
   const activities = loadActivities();
   const constraints = loadConstraints();
@@ -154,17 +155,15 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
     }
   }, [messages]);
 
-  const handleSend = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const trimmedInput = input.trim();
-    if (!trimmedInput) return;
+  const sendMessage = useCallback(async (text: string, currentMessages: ChatMessage[]) => {
+    if (!text || isLoading) return;
 
     const timestamp = new Date().toISOString();
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       role: "user",
-      content: trimmedInput,
+      content: text,
       createdAt: timestamp,
     };
 
@@ -175,12 +174,13 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
       createdAt: timestamp,
     };
 
-    setMessages((current) => [...current, userMessage, loadingMessage]);
-    setInput("");
+    const nextMessages = [...currentMessages, userMessage, loadingMessage];
+    setMessages(nextMessages);
+    setFailedInput(null);
     setIsLoading(true);
 
     try {
-      const history = messages.map((m) => ({ role: m.role, content: m.content }));
+      const history = currentMessages.map((m) => ({ role: m.role, content: m.content }));
       const todayDateStr = getTodayDateString();
       const calendarAbOverride = getAbOverrideForDate(calendarEntries, todayDateStr);
       const effectiveDayType = calendarAbOverride ?? todayDayType;
@@ -189,7 +189,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: trimmedInput,
+          message: text,
           history,
           tasks,
           reminderPreferences,
@@ -203,18 +203,26 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
         }),
       });
 
+      if (!response.ok) {
+        let serverError = "AI request failed.";
+        try {
+          const errJson = (await response.json()) as { error?: string };
+          if (errJson.error) serverError = errJson.error;
+        } catch { /* ignore parse error */ }
+        throw new Error(serverError);
+      }
+
       const json = (await response.json()) as {
         data?: ChatMessage;
         action?: AssistantAction;
         error?: string;
       };
 
-      const assistantMessage: ChatMessage = json.data ?? {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: "Something went wrong. Please try again.",
-        createdAt: new Date().toISOString(),
-      };
+      if (json.error || !json.data) {
+        throw new Error(json.error ?? "No response from AI.");
+      }
+
+      const assistantMessage: ChatMessage = json.data;
 
       // Handle automation creation action
       if (json.action?.type === "create_automation") {
@@ -242,7 +250,6 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
               "\n\n(I ran into an issue saving that reminder — you can add it manually in [Automations](/automations).)";
           }
         } else {
-          // Automation data was malformed — let the user know
           assistantMessage.content =
             assistantMessage.content.trimEnd() +
             "\n\n(I wasn't able to set that up automatically. Try describing the reminder again or add it in [Automations](/automations).)";
@@ -256,10 +263,8 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
 
         if (match) {
           completeTask(match.id);
-          // Replace the assistant message with a clean confirmation
           assistantMessage.content = `Done — I marked **${match.title}** as complete.`;
         } else if (ambiguous) {
-          // Show a disambiguation list — do NOT guess
           const activeTasks = tasks.filter((t) => t.status !== "done");
           const needle = (taskTitle ?? "").toLowerCase();
           const candidates = activeTasks
@@ -273,32 +278,55 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
           assistantMessage.content =
             `I found a few tasks that could match — which one did you finish?\n\n${list}`;
         } else {
-          // No match found — tell the user clearly instead of silently failing
           const taskLabel = taskTitle ? `"${taskTitle}"` : "that task";
           assistantMessage.content = `I couldn't find ${taskLabel} in your task list. Can you give me a bit more detail, or check the spelling?`;
         }
       }
 
       setMessages((current) => [...current.slice(0, -1), assistantMessage]);
-    } catch {
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "Something went wrong.";
+      setFailedInput(text);
       setMessages((current) => [
         ...current.slice(0, -1),
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          content: "Something went wrong. Please try again.",
+          content: detail,
           createdAt: new Date().toISOString(),
+          failed: true,
         },
       ]);
     } finally {
       setIsLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, calendarEntries, todayDayType, tasks, reminderPreferences, classes, profile, activities, constraints, addAutomation, completeTask]);
+
+  const handleSend = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedInput = input.trim();
+    if (!trimmedInput) return;
+    setInput("");
+    await sendMessage(trimmedInput, messages);
   };
+
+  const handleRetry = useCallback(() => {
+    if (!failedInput) return;
+    const retryText = failedInput;
+    const withoutFailed = messages.filter((m) => !m.failed);
+    setMessages(withoutFailed);
+    void sendMessage(retryText, withoutFailed);
+  }, [failedInput, messages, sendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      void handleSend(e as unknown as React.FormEvent<HTMLFormElement>);
+      const trimmedInput = input.trim();
+      if (trimmedInput) {
+        setInput("");
+        void sendMessage(trimmedInput, messages);
+      }
     }
   };
 
@@ -318,7 +346,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
         className="chat-scroll flex-1 space-y-5 overflow-y-auto pb-2 pr-1"
       >
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble key={message.id} message={message} onRetry={message.failed ? handleRetry : undefined} />
         ))}
 
         {/* Suggested prompts — shown only before first user message */}
@@ -545,7 +573,7 @@ function renderInline(text: string): React.ReactNode {
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({ message, onRetry }: { message: ChatMessage; onRetry?: () => void }) {
   const isUser = message.role === "user";
   const isLoading = message.content === "...";
 
@@ -566,9 +594,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         ✦
       </div>
       <div
-        className={`max-w-[80%] rounded-2xl rounded-bl-sm border border-border bg-card px-4 py-3 text-sm text-foreground shadow-sm ${
-          isLoading ? "opacity-60" : ""
-        }`}
+        className={`max-w-[80%] rounded-2xl rounded-bl-sm border px-4 py-3 text-sm shadow-sm ${
+          message.failed
+            ? "border-accent-rose/30 bg-accent-rose/5 text-muted"
+            : "border-border bg-card text-foreground"
+        } ${isLoading ? "opacity-60" : ""}`}
       >
         {isLoading ? (
           <span className="flex items-center gap-1.5 py-0.5">
@@ -577,7 +607,18 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted [animation-delay:300ms]" />
           </span>
         ) : (
-          renderContent(message.content)
+          <>
+            {renderContent(message.content)}
+            {message.failed && onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-2 text-xs font-medium text-accent-green-foreground underline underline-offset-2 hover:opacity-80"
+              >
+                Try again
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

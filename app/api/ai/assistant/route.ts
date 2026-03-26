@@ -19,6 +19,14 @@ export async function POST(request: Request) {
     calendarEntries?: SchoolCalendarEntry[];
   };
 
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("[AI Assistant] OPENAI_API_KEY is not set.");
+    return NextResponse.json(
+      { error: "AI is not configured. Set OPENAI_API_KEY in your environment." },
+      { status: 503 }
+    );
+  }
+
   if (!body.message) {
     return NextResponse.json({ error: "Message is required." }, { status: 400 });
   }

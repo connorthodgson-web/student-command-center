@@ -114,6 +114,123 @@ const AP_PATTERNS: ApPattern[] = [
       /ap\s*spanish(?:\s*lang(?:uage)?(?:\s*(?:and|&)\s*culture)?)?/i,
     ],
   },
+  {
+    key: "ap_french_language",
+    patterns: [
+      /ap\s*french(?:\s*lang(?:uage)?(?:\s*(?:and|&)\s*culture)?)?/i,
+    ],
+  },
+  {
+    key: "ap_latin",
+    patterns: [
+      /ap\s*latin\b/i,
+    ],
+  },
+  // ── History (additional) ──
+  {
+    key: "ap_european_history",
+    patterns: [
+      /ap\s*(?:european|euro)\s*hist(?:ory)?/i,
+      /\bapeh\b/i,
+    ],
+  },
+  // ── Social Sciences ──
+  {
+    key: "ap_human_geography",
+    patterns: [
+      /ap\s*human\s*geo(?:graphy)?/i,
+      /\baphug\b/i,
+    ],
+  },
+  {
+    key: "ap_psychology",
+    patterns: [
+      /ap\s*psych(?:ology)?/i,
+    ],
+  },
+  // ── Government — comparative before generic so "AP Comp Gov" is caught first ──
+  {
+    key: "ap_comparative_government",
+    patterns: [
+      /ap\s*comp(?:arative)\s*gov(?:ernment)?(?:\s*(?:and|&)\s*politics?)?/i,
+      /ap\s*comp\s*gov\b/i,
+    ],
+  },
+  {
+    key: "ap_us_government",
+    patterns: [
+      /ap\s*(?:u\.?s\.?\s*)?gov(?:ernment)?(?:\s*(?:and|&)\s*politics?)?/i,
+      /\bapgov\b/i,
+    ],
+  },
+  // ── Economics ──
+  {
+    key: "ap_macroeconomics",
+    patterns: [
+      /ap\s*macro(?:economics?)?/i,
+      /ap\s*macro\b/i,
+    ],
+  },
+  {
+    key: "ap_microeconomics",
+    patterns: [
+      /ap\s*micro(?:economics?)?/i,
+      /ap\s*micro\b/i,
+    ],
+  },
+  // ── Environmental Science ──
+  {
+    key: "ap_environmental_science",
+    patterns: [
+      /ap\s*env(?:ironmental)?\s*sci(?:ence)?/i,
+      /\bapes\b/i,
+    ],
+  },
+  // ── Physics (additional) — E&M before bare "Physics C" so it gets matched first ──
+  {
+    key: "ap_physics_2",
+    patterns: [
+      /ap\s*physics\s*2\b/i,
+      /ap\s*physics\s*(?:two|ii)\b/i,
+    ],
+  },
+  {
+    key: "ap_physics_c_em",
+    patterns: [
+      /ap\s*physics\s*c[\s:,]+(?:e(?:lectricity)?(?:\s*(?:and|&)\s*)?m(?:agnetism)?|e\s*&\s*m\b|em\b)/i,
+      /ap\s*physics\s*c[\s:,]+e\.?m\.?\b/i,
+    ],
+  },
+  {
+    key: "ap_physics_c_mechanics",
+    patterns: [
+      /ap\s*physics\s*c[\s:,]+mech(?:anics)?/i,
+      // Bare "AP Physics C" with no qualifier defaults to Mechanics
+      /ap\s*physics\s*c\b/i,
+    ],
+  },
+  // ── CS Principles ──
+  {
+    key: "ap_computer_science_principles",
+    patterns: [
+      /ap\s*(?:comp(?:uter)?\s*)?sci(?:ence)?\s*principles?\b/i,
+      /ap\s*csp\b/i,
+      /\bapcsp\b/i,
+    ],
+  },
+  // ── Arts ──
+  {
+    key: "ap_art_history",
+    patterns: [
+      /ap\s*art\s*hist(?:ory)?/i,
+    ],
+  },
+  {
+    key: "ap_music_theory",
+    patterns: [
+      /ap\s*music\s*theory/i,
+    ],
+  },
 ];
 
 /**

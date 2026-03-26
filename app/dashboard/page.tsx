@@ -24,7 +24,7 @@ import {
   sortTasksByDueDate,
 } from "../../lib/tasks";
 import type { TaskDisplayBuckets } from "../../lib/tasks";
-import type { SchoolDayCategory } from "../../types";
+import type { SchoolClass, SchoolDayCategory, Weekday } from "../../types";
 import { TodayFocusCard } from "../../components/TodayFocusCard";
 
 const BUCKET_LABELS: Record<keyof TaskDisplayBuckets, string> = {
@@ -76,6 +76,157 @@ function formatTodayLong(): string {
     month: "long",
     day: "numeric",
   });
+}
+
+/** "in 5 min", "in 1 h 10 min", etc. Returns null when mins ≤ 0. */
+function formatMinutesUntil(mins: number): string | null {
+  if (mins <= 0) return null;
+  if (mins < 60) return `in ${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `in ${h} h` : `in ${h} h ${m} min`;
+}
+
+// ── Today's Schedule snapshot ─────────────────────────────────────────────────
+
+function TodaySchedule({
+  classes,
+  todayWeekday,
+}: {
+  classes: SchoolClass[];
+  todayWeekday: Weekday;
+}) {
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  type CStatus = "current" | "next" | "upcoming" | "done";
+
+  // Parse times once and carry them through to rendering
+  const withStatus = classes.map((cls) => {
+    const time = getClassTimeForDay(cls, todayWeekday);
+    if (!time) return { cls, time: null, status: "upcoming" as CStatus, startMin: null, endMin: null };
+
+    const [sh, sm] = time.startTime.split(":").map(Number);
+    const [eh, em] = time.endTime.split(":").map(Number);
+    const startMin = sh * 60 + sm;
+    const endMin   = eh * 60 + em;
+
+    if (nowMinutes >= startMin && nowMinutes < endMin)
+      return { cls, time, status: "current" as CStatus, startMin, endMin };
+    if (nowMinutes < startMin)
+      return { cls, time, status: "upcoming" as CStatus, startMin, endMin };
+    return { cls, time, status: "done" as CStatus, startMin, endMin };
+  });
+
+  // First "upcoming" → "next"
+  let foundNext = false;
+  const entries = withStatus.map((e) => {
+    if (e.status === "upcoming" && !foundNext) {
+      foundNext = true;
+      return { ...e, status: "next" as CStatus };
+    }
+    return e;
+  });
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+          Today&apos;s Schedule
+        </h2>
+        <Link
+          href="/classes"
+          className="text-[11px] text-muted transition-colors hover:text-foreground"
+        >
+          View all →
+        </Link>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-card">
+        {entries.map(({ cls, time, status, startMin, endMin }, i) => {
+          const dotColor  = cls.color ?? "#d4edd9";
+          const isDone    = status === "done";
+          const isCurrent = status === "current";
+          const isNext    = status === "next";
+          const isUpcoming = status === "upcoming";
+
+          const countdown =
+            (isNext || isUpcoming) && startMin !== null
+              ? formatMinutesUntil(startMin - nowMinutes)
+              : null;
+
+          const progressPct =
+            isCurrent && startMin !== null && endMin !== null && endMin > startMin
+              ? Math.min(100, ((nowMinutes - startMin) / (endMin - startMin)) * 100)
+              : null;
+
+          return (
+            <div
+              key={cls.id}
+              className={`relative flex items-center gap-3 px-4 py-3 ${
+                i < entries.length - 1 ? "border-b border-border/50" : ""
+              } ${isDone    ? "opacity-40"        : ""}
+                ${isCurrent ? "bg-accent-green/5" : ""}`}
+            >
+              {/* Color dot */}
+              <div
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: dotColor }}
+              />
+
+              {/* Name + time */}
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-semibold leading-tight ${isDone ? "text-muted" : "text-foreground"}`}>
+                  {cls.name}
+                </p>
+                <p className="mt-0.5 text-xs text-muted">
+                  {time
+                    ? <>
+                        {formatTimeRange(time.startTime, time.endTime)}
+                        {cls.room && <span className="opacity-60"> · {cls.room}</span>}
+                      </>
+                    : <span className="italic opacity-60">Time not set</span>
+                  }
+                </p>
+              </div>
+
+              {/* Status badges */}
+              {isCurrent && (
+                <span className="shrink-0 rounded-full bg-accent-green/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent-green-foreground">
+                  Now
+                </span>
+              )}
+              {isNext && countdown && (
+                <span className="shrink-0 text-[10px] font-medium text-muted">
+                  {countdown}
+                </span>
+              )}
+              {isNext && !countdown && (
+                <span className="shrink-0 rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                  Next
+                </span>
+              )}
+              {isDone && (
+                <svg className="h-3.5 w-3.5 shrink-0 text-muted/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+
+              {/* Progress bar on the active class row */}
+              {progressPct !== null && (
+                <div className="absolute inset-x-0 bottom-0 h-[2px] bg-black/5">
+                  <div
+                    className="h-full rounded-full bg-accent-green-foreground/40 transition-all duration-60000"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 export default function DashboardPage() {
@@ -262,115 +413,10 @@ export default function DashboardPage() {
 
         {/* Today's schedule snapshot */}
         {!noSchoolToday && todayClasses.length > 0 && (
-          <section>
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
-                Today&apos;s Schedule
-              </h2>
-              <Link
-                href="/classes"
-                className="text-[11px] text-muted transition-colors hover:text-foreground"
-              >
-                View all →
-              </Link>
-            </div>
-            <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-card">
-              {(() => {
-                const nowMinutes =
-                  new Date().getHours() * 60 + new Date().getMinutes();
-
-                type CStatus = "current" | "next" | "upcoming" | "done";
-
-                const withStatus = todayClasses.map((cls) => {
-                  const time = getClassTimeForDay(cls, todayWeekday);
-                  if (!time) return { cls, time, status: "upcoming" as CStatus };
-                  const [sh, sm] = time.startTime.split(":").map(Number);
-                  const [eh, em] = time.endTime.split(":").map(Number);
-                  const startMin = sh * 60 + sm;
-                  const endMin = eh * 60 + em;
-                  if (nowMinutes >= startMin && nowMinutes < endMin)
-                    return { cls, time, status: "current" as CStatus };
-                  if (nowMinutes < startMin)
-                    return { cls, time, status: "upcoming" as CStatus };
-                  return { cls, time, status: "done" as CStatus };
-                });
-
-                // Mark only the first upcoming as "next"
-                let foundNext = false;
-                const entries = withStatus.map((e) => {
-                  if (e.status === "upcoming" && !foundNext) {
-                    foundNext = true;
-                    return { ...e, status: "next" as CStatus };
-                  }
-                  return e;
-                });
-
-                return entries.map(({ cls, time, status }, i) => {
-                  const dotColor = cls.color ?? "#d4edd9";
-                  const isDone = status === "done";
-                  const isCurrent = status === "current";
-                  const isNext = status === "next";
-                  return (
-                    <div
-                      key={cls.id}
-                      className={`flex items-center gap-3 px-4 py-3 ${
-                        i < entries.length - 1 ? "border-b border-border/50" : ""
-                      } ${isDone ? "opacity-40" : ""} ${
-                        isCurrent ? "bg-accent-green/5" : ""
-                      }`}
-                    >
-                      <div
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: dotColor }}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p
-                          className={`text-sm font-semibold leading-tight ${
-                            isDone ? "text-muted" : "text-foreground"
-                          }`}
-                        >
-                          {cls.name}
-                        </p>
-                        {time && (
-                          <p className="mt-0.5 text-xs text-muted">
-                            {formatTimeRange(time.startTime, time.endTime)}
-                            {cls.room ? (
-                              <span className="opacity-60"> · {cls.room}</span>
-                            ) : null}
-                          </p>
-                        )}
-                      </div>
-                      {isCurrent && (
-                        <span className="shrink-0 rounded-full bg-accent-green/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent-green-foreground">
-                          Now
-                        </span>
-                      )}
-                      {isNext && (
-                        <span className="shrink-0 rounded-full bg-surface px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                          Next
-                        </span>
-                      )}
-                      {isDone && (
-                        <svg
-                          className="h-3.5 w-3.5 shrink-0 text-muted/40"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
-                      )}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </section>
+          <TodaySchedule
+            classes={todayClasses}
+            todayWeekday={todayWeekday}
+          />
         )}
 
         {/* Empty state: no classes set up yet */}

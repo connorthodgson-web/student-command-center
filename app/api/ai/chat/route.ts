@@ -214,6 +214,14 @@ export async function POST(request: Request) {
     constraints?: LifeConstraint[];
   };
 
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("[AI Chat] OPENAI_API_KEY is not set.");
+    return NextResponse.json(
+      { error: "AI is not configured. Set OPENAI_API_KEY in your environment." },
+      { status: 503 }
+    );
+  }
+
   if (!body.message) {
     return NextResponse.json({ error: "Message is required." }, { status: 400 });
   }
@@ -237,13 +245,23 @@ export async function POST(request: Request) {
     { role: "user", content: body.message },
   ];
 
-  const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 1000,
-    messages,
-  });
+  let aiResponse: Awaited<ReturnType<typeof client.chat.completions.create>>;
+  try {
+    aiResponse = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 1000,
+      messages,
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error("[AI Chat] OpenAI error:", detail);
+    return NextResponse.json(
+      { error: "AI request failed. Please try again." },
+      { status: 502 }
+    );
+  }
 
-  const rawContent = response.choices[0].message.content ?? "Sorry, I couldn't respond.";
+  const rawContent = aiResponse.choices[0].message.content ?? "Sorry, I couldn't respond.";
 
   // Extract optional ACTION payload from the last line of the response
   let content = rawContent;

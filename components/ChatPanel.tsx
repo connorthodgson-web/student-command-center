@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTaskStore } from "../lib/task-store";
 import { useReminderStore } from "../lib/reminder-store";
 import { useClasses } from "../lib/stores/classStore";
@@ -106,16 +106,33 @@ function useSpeechInput(onTranscript: (text: string) => void) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-const SUGGESTED_PROMPTS = [
-  "What should I focus on today?",
-  "What do I have coming up?",
-  "Help me plan tonight",
-];
+/** Returns 3 contextual prompts based on how much data the user has set up. */
+function getContextualPrompts(hasClasses: boolean, hasTasks: boolean): string[] {
+  if (!hasClasses) {
+    return [
+      "Help me set up my class schedule",
+      "What can you help me with?",
+      "Walk me through getting started",
+    ];
+  }
+  if (!hasTasks) {
+    return [
+      "Help me log my homework",
+      "I have a test coming up — add it",
+      "What's on my schedule today?",
+    ];
+  }
+  return [
+    "What should I focus on tonight?",
+    "When's my next test?",
+    "Help me plan this week",
+  ];
+}
 
 const INITIAL_GREETING: ChatMessage = {
   id: "chat-greeting",
   role: "assistant",
-  content: "Hi! I can help you check what's due, look at your schedule, or think through your week. What's on your mind?",
+  content: "Hi! I'm your academic assistant. I can help you check what's due, plan your week, add tasks, or talk through your schedule. What's on your mind?",
   createdAt: new Date().toISOString(),
 };
 
@@ -135,6 +152,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
   const { addAutomation } = useAutomations();
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const initialSendRef = useRef(false);
 
   const { voiceState, isSupported, startListening, stopListening } = useSpeechInput(
     (transcript) => {
@@ -143,10 +161,21 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
     }
   );
 
-  // Pre-fill from ?q= deep-link
+  // Contextual prompts based on the user's current data state
+  const suggestedPrompts = useMemo(
+    () => getContextualPrompts(classes.length > 0, tasks.filter((t) => t.status !== "done").length > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [classes.length, tasks.length]
+  );
+
+  // Auto-send when arriving from dashboard via ?q= deep-link
   useEffect(() => {
-    if (initialQuery) setInput(initialQuery);
-  }, [initialQuery]);
+    if (initialQuery && !initialSendRef.current) {
+      initialSendRef.current = true;
+      void sendMessage(initialQuery, [INITIAL_GREETING]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — run once on mount only
 
   // Auto-scroll to newest message
   useEffect(() => {
@@ -352,7 +381,7 @@ export function ChatPanel({ initialQuery }: { initialQuery?: string }) {
         {/* Suggested prompts — shown only before first user message */}
         {!hasUserMessages && (
           <div className="flex flex-wrap gap-2 pt-1 pl-10">
-            {SUGGESTED_PROMPTS.map((prompt) => (
+            {suggestedPrompts.map((prompt) => (
               <button
                 key={prompt}
                 type="button"

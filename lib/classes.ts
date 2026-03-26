@@ -16,8 +16,8 @@ export type DbClassRow = {
   notes: string | null;
   syllabus_text: string | null;
   class_notes: string | null;
-  is_ap_course: boolean | null;
-  ap_course_key: string | null;
+  // NOTE: is_ap_course and ap_course_key are not yet in the DB schema.
+  // Add columns via migration before re-enabling these fields.
   created_at: string;
 };
 
@@ -41,8 +41,7 @@ export function mapDbClassToSchoolClass(row: DbClassRow): SchoolClass {
     notes: row.notes ?? undefined,
     syllabusText: row.syllabus_text ?? undefined,
     classNotes: row.class_notes ?? undefined,
-    isApCourse: row.is_ap_course ?? undefined,
-    apCourseKey: row.ap_course_key ?? undefined,
+    // is_ap_course / ap_course_key not yet in DB — omitted until migration runs
   };
 }
 
@@ -68,8 +67,7 @@ export function mapSchoolClassToInsert(
     notes: emptyToNull(schoolClass.notes),
     syllabus_text: emptyToNull(schoolClass.syllabusText),
     class_notes: emptyToNull(schoolClass.classNotes),
-    is_ap_course: schoolClass.isApCourse ?? null,
-    ap_course_key: schoolClass.apCourseKey ?? null,
+    // is_ap_course / ap_course_key intentionally excluded — columns not yet in DB
   };
 }
 
@@ -116,12 +114,7 @@ export function mapSchoolClassToUpdate(updates: ClassUpdate) {
   if ("classNotes" in updates) {
     payload.class_notes = emptyToNull(updates.classNotes);
   }
-  if ("isApCourse" in updates) {
-    payload.is_ap_course = updates.isApCourse ?? null;
-  }
-  if ("apCourseKey" in updates) {
-    payload.ap_course_key = updates.apCourseKey ?? null;
-  }
+  // isApCourse / apCourseKey intentionally excluded — columns not yet in DB
 
   return payload;
 }

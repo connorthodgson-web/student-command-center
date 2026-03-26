@@ -6,7 +6,19 @@ import { useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { useAuth } from "../lib/auth-context";
 
+// primary: true items get a slightly elevated treatment when inactive
 const NAV_LINKS = [
+  {
+    href: "/chat",
+    label: "Assistant",
+    icon: (
+      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+          d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+      </svg>
+    ),
+    primary: true,
+  },
   {
     href: "/dashboard",
     label: "Dashboard",
@@ -20,18 +32,9 @@ const NAV_LINKS = [
     ),
   },
   {
-    href: "/chat",
-    label: "Assistant",
-    icon: (
-      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
-          d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-      </svg>
-    ),
-  },
-  {
     href: "/tasks",
     label: "Tasks",
+    dividerBefore: true,
     icon: (
       <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
@@ -111,34 +114,45 @@ function NavLinks({
   pathname: string;
 }) {
   return (
-    <nav className="flex-1 space-y-0.5 px-3 py-4">
+    <nav className="flex-1 px-3 py-4">
       {NAV_LINKS.map((link) => {
         const isActive =
           pathname === link.href || pathname.startsWith(link.href + "/");
+        const isPrimary = "primary" in link && link.primary;
         return (
-          <Link
-            key={link.href}
-            href={link.href}
-            onClick={onLinkClick}
-            className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all ${
-              isActive
-                ? "bg-sidebar-active font-medium text-white"
-                : "text-sidebar-text hover:bg-white/[0.06] hover:text-white/80"
-            }`}
-          >
-            {/* Vivid accent indicator bar */}
-            {isActive && (
-              <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-accent" />
+          <div key={link.href}>
+            {"dividerBefore" in link && link.dividerBefore && (
+              <div className="mx-1 my-2 border-t border-white/[0.06]" />
             )}
-            <span
-              className={`shrink-0 transition-colors ${
-                isActive ? "text-sidebar-accent" : "text-sidebar-text/70 group-hover:text-sidebar-text"
+            <Link
+              href={link.href}
+              onClick={onLinkClick}
+              className={`group relative mb-0.5 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all ${
+                isActive
+                  ? "bg-sidebar-active font-medium text-white"
+                  : isPrimary
+                  ? "text-sidebar-text/90 hover:bg-white/[0.06] hover:text-white"
+                  : "text-sidebar-text hover:bg-white/[0.06] hover:text-white/80"
               }`}
             >
-              {link.icon}
-            </span>
-            <span className="leading-none">{link.label}</span>
-          </Link>
+              {/* Vivid accent indicator bar */}
+              {isActive && (
+                <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-accent" />
+              )}
+              <span
+                className={`shrink-0 transition-colors ${
+                  isActive
+                    ? "text-sidebar-accent"
+                    : isPrimary
+                    ? "text-sidebar-accent/60 group-hover:text-sidebar-accent/80"
+                    : "text-sidebar-text/70 group-hover:text-sidebar-text"
+                }`}
+              >
+                {link.icon}
+              </span>
+              <span className="leading-none">{link.label}</span>
+            </Link>
+          </div>
         );
       })}
     </nav>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { formatDueDate } from "../lib/datetime";
 import { useCalendar } from "../lib/stores/calendarStore";
 import { useScheduleConfig } from "../lib/stores/scheduleConfig";
@@ -28,7 +29,6 @@ type InputStatus =
   | "loading"
   | "task-preview"
   | "schedule-preview"
-  | "chat-reply"
   | "error";
 
 type AssistantInputProps = {
@@ -37,6 +37,7 @@ type AssistantInputProps = {
   reminderPreferences: ReminderPreference;
   onTaskConfirmed: (task: StudentTask) => void;
   onSchedulesConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => Promise<void> | void;
+  placeholder?: string;
 };
 
 type AssistantResponse =
@@ -44,18 +45,22 @@ type AssistantResponse =
   | { intent: "setup_schedule"; classes: Array<Omit<SchoolClass, "id">> }
   | { intent: "chat"; reply: ChatMessage };
 
+const DEFAULT_PLACEHOLDER =
+  "Add a task, ask about your week, or describe your full schedule to set it up...";
+
 export function AssistantInput({
   tasks,
   classes,
   reminderPreferences,
   onTaskConfirmed,
   onSchedulesConfirmed,
+  placeholder,
 }: AssistantInputProps) {
+  const router = useRouter();
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<InputStatus>("idle");
   const [taskPreview, setTaskPreview] = useState<Partial<StudentTask> | null>(null);
   const [editableSchedule, setEditableSchedule] = useState<Array<Omit<SchoolClass, "id">> | null>(null);
-  const [chatReply, setChatReply] = useState<ChatMessage | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
@@ -69,7 +74,6 @@ export function AssistantInput({
 
     setStatus("loading");
     setTaskPreview(null);
-    setChatReply(null);
     setErrorMessage(null);
 
     try {
@@ -110,8 +114,9 @@ export function AssistantInput({
         setTaskPreview(json.task);
         setStatus("task-preview");
       } else {
-        setChatReply(json.reply);
-        setStatus("chat-reply");
+        // Chat intent → hand off to the full assistant
+        router.push(`/chat?q=${encodeURIComponent(trimmed)}`);
+        setStatus("idle");
         setInput("");
       }
     } catch (err) {
@@ -189,11 +194,6 @@ export function AssistantInput({
     setEditableSchedule((prev) => prev?.filter((_, idx) => idx !== i) ?? null);
   };
 
-  const handleDismissReply = () => {
-    setChatReply(null);
-    setStatus("idle");
-  };
-
   const previewClass = taskPreview?.classId
     ? classes.find((c) => c.id === taskPreview.classId)
     : null;
@@ -213,7 +213,7 @@ export function AssistantInput({
                 void handleSubmit(e as unknown as React.FormEvent);
               }
             }}
-            placeholder="Add a task, ask about your week, or describe your full schedule to set it up..."
+            placeholder={placeholder ?? DEFAULT_PLACEHOLDER}
             rows={3}
             disabled={isSubmitting}
             className="w-full resize-none rounded-2xl border border-white/20 bg-white/10 px-4 py-3.5 text-sm text-white placeholder:text-white/40 outline-none transition focus:border-white/40 focus:bg-white/15 focus:ring-2 focus:ring-white/10 disabled:opacity-60"
@@ -227,47 +227,10 @@ export function AssistantInput({
               {isSubmitting ? "Thinking..." : "Send"}
             </button>
             <p className="text-xs text-white/40">Enter to send · Shift+Enter for new line</p>
-            {status === "chat-reply" && (
-              <button
-                type="button"
-                onClick={handleDismissReply}
-                className="ml-auto text-xs text-white/50 underline underline-offset-2 hover:text-white/80"
-              >
-                Dismiss
-              </button>
-            )}
           </div>
         </form>
       )}
 
-      {status === "chat-reply" && chatReply && (
-        <div className="rounded-2xl border border-white/15 bg-white/10 px-5 py-4 backdrop-blur-sm">
-          <div className="mb-2 flex items-center gap-2">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sidebar-accent/20 text-[9px] text-sidebar-accent">
-              ✦
-            </span>
-            <p className="text-xs font-medium text-white/60">Assistant</p>
-          </div>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/90">
-            {chatReply.content}
-          </p>
-          <div className="mt-3 flex gap-3">
-            <button
-              type="button"
-              onClick={handleDismissReply}
-              className="text-xs text-white/40 underline underline-offset-2 hover:text-white/70"
-            >
-              Dismiss
-            </button>
-            <a
-              href="/chat"
-              className="text-xs text-sidebar-accent/80 underline underline-offset-2 hover:text-sidebar-accent"
-            >
-              Open full chat →
-            </a>
-          </div>
-        </div>
-      )}
 
       {status === "task-preview" && taskPreview && (
         <div className="space-y-4 rounded-2xl border border-white/15 bg-hero-mid px-5 py-5">
@@ -342,11 +305,11 @@ export function AssistantInput({
         <div className="space-y-4 rounded-2xl border border-white/15 bg-hero-mid px-5 py-5">
           <div>
             <p className="text-sm font-semibold text-white">
-              Review your schedule — {editableSchedule.length}{" "}
+              Got it — {editableSchedule.length}{" "}
               {editableSchedule.length === 1 ? "class" : "classes"} found
             </p>
             <p className="mt-0.5 text-xs text-white/50">
-              Edit any details, then confirm to add them all at once.
+              Review and fill in any missing details, then confirm to add them all.
             </p>
           </div>
 
@@ -356,6 +319,7 @@ export function AssistantInput({
                 key={i}
                 className="space-y-3 rounded-xl border border-white/10 bg-hero px-4 py-3"
               >
+                {/* Class name row */}
                 <div className="flex items-center gap-2">
                   <div
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -378,6 +342,35 @@ export function AssistantInput({
                   </button>
                 </div>
 
+                {/* Teacher + Room */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex items-center gap-1.5 text-xs text-white/50">
+                    <span className="w-12 shrink-0">Teacher</span>
+                    <input
+                      type="text"
+                      value={cls.teacherName ?? ""}
+                      onChange={(e) =>
+                        updateEditableClass(i, { teacherName: e.target.value || undefined })
+                      }
+                      className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white placeholder:text-white/25 outline-none focus:border-white/30 focus:bg-white/10"
+                      placeholder="e.g. Mr. Johnson"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs text-white/50">
+                    <span className="w-8 shrink-0">Room</span>
+                    <input
+                      type="text"
+                      value={cls.room ?? ""}
+                      onChange={(e) =>
+                        updateEditableClass(i, { room: e.target.value || undefined })
+                      }
+                      className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white placeholder:text-white/25 outline-none focus:border-white/30 focus:bg-white/10"
+                      placeholder="e.g. 204"
+                    />
+                  </div>
+                </div>
+
+                {/* Time */}
                 <div className="flex items-center gap-2 text-xs text-white/50">
                   <span className="shrink-0">Time</span>
                   <input
@@ -387,7 +380,7 @@ export function AssistantInput({
                     className="w-16 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white placeholder:text-white/30 outline-none focus:border-white/30 focus:bg-white/10"
                     placeholder="09:00"
                   />
-                  <span>-</span>
+                  <span>–</span>
                   <input
                     type="text"
                     value={cls.endTime}
@@ -397,6 +390,7 @@ export function AssistantInput({
                   />
                 </div>
 
+                {/* Days */}
                 <div className="flex flex-wrap gap-1">
                   {WEEKDAYS.map(({ label, value }) => (
                     <button
@@ -414,6 +408,7 @@ export function AssistantInput({
                   ))}
                 </div>
 
+                {/* Rotation */}
                 <div className="flex items-center gap-2 text-xs text-white/50">
                   <span>Rotation</span>
                   {(["A", "B", null] as const).map((label) => (

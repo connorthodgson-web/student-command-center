@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo } from "react";
 import { AssistantInput } from "../../components/AssistantInput";
 import { NextTaskCard } from "../../components/NextTaskCard";
 import { TaskCard } from "../../components/TaskCard";
@@ -270,6 +271,16 @@ export default function DashboardPage() {
   const overdueCount = groupedTasks.overdue.length;
   const tasksWithDates = incompleteTasks.filter((t) => t.dueAt).length;
 
+  const assistantPlaceholder = useMemo(() => {
+    if (classes.length === 0) {
+      return "Describe your class schedule to get started (e.g. \"Math Mon/Wed/Fri 9–9:50 with Mr. Chen\")...";
+    }
+    if (incompleteTasks.length === 0) {
+      return "Add an assignment like \"History essay due Friday\" or ask what's on your schedule...";
+    }
+    return "Add a task, ask about your workload, or ask for a study plan...";
+  }, [classes.length, incompleteTasks.length]);
+
   return (
     <main className="flex min-h-screen flex-col">
       {/* ── Dark hero: greeting + assistant input ─────────────────── */}
@@ -294,6 +305,9 @@ export default function DashboardPage() {
           <h1 className="mt-2 text-[2.4rem] font-bold tracking-tight text-white leading-[1.15]">
             What&apos;s on your mind?
           </h1>
+          <p className="mt-1.5 text-sm text-white/40">
+            Add a task, set up your schedule, or type anything — your assistant handles it.
+          </p>
 
           {/* Status chips */}
           <div className="mt-4 flex flex-wrap gap-2">
@@ -327,7 +341,17 @@ export default function DashboardPage() {
               reminderPreferences={reminderPreferences}
               onTaskConfirmed={addTask}
               onSchedulesConfirmed={addClasses}
+              placeholder={assistantPlaceholder}
             />
+            <div className="mt-3 flex items-center gap-1.5">
+              <span className="text-[11px] text-white/25">Want a full conversation?</span>
+              <Link
+                href="/chat"
+                className="text-[11px] text-sidebar-accent/60 transition-colors hover:text-sidebar-accent"
+              >
+                Open the assistant →
+              </Link>
+            </div>
           </div>
         </div>
       </div>
@@ -424,7 +448,7 @@ export default function DashboardPage() {
           <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-7">
             <p className="text-sm font-medium text-foreground">No classes set up yet.</p>
             <p className="mt-1 text-sm text-muted">
-              Describe your schedule above and the assistant will set it up for you, or{" "}
+              Type your schedule in the input above — your assistant will parse and add it for you. Or{" "}
               <Link
                 href="/classes"
                 className="font-medium text-accent-green-foreground underline underline-offset-2"

@@ -56,7 +56,13 @@ export function TaskCard({ task, schoolClass, isOverdue = false, isRemoving = fa
       className={`group rounded-xl border border-border border-l-4 ${borderColor} bg-card p-4 hover:shadow-md ${
         isRemoving ? "pointer-events-none" : ""
       }`}
-      style={{ opacity, transition, transform: isRemoving ? "translateY(-2px)" : undefined }}
+      style={{
+        opacity,
+        transition,
+        transform: isRemoving ? "translateY(-2px)" : undefined,
+        // Class color overrides the type-based Tailwind border color when available
+        ...(schoolClass?.color ? { borderLeftColor: schoolClass.color } : {}),
+      }}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex items-start gap-3">
@@ -95,9 +101,14 @@ export function TaskCard({ task, schoolClass, isOverdue = false, isRemoving = fa
               Overdue
             </span>
           )}
+          {task.status === "todo" && !showOverdue && (
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusBadge}`}>
+              To Do
+            </span>
+          )}
           {task.status === "in_progress" && (
-            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${statusBadge}`}>
-              In progress
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusBadge}`}>
+              In Progress
             </span>
           )}
           {task.status === "done" && (
@@ -106,10 +117,20 @@ export function TaskCard({ task, schoolClass, isOverdue = false, isRemoving = fa
             </span>
           )}
           {task.type && (
-            <span
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${typeBadge}`}
-            >
-              {task.type}
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${typeBadge}`}>
+              {task.type === "assignment"
+                ? "Assignment"
+                : task.type === "test"
+                  ? "Test"
+                  : task.type === "quiz"
+                    ? "Quiz"
+                    : task.type === "reading"
+                      ? "Reading"
+                      : task.type === "project"
+                        ? "Project"
+                        : task.type === "study"
+                          ? "Study"
+                          : task.type}
             </span>
           )}
           {/* Delete button — always visible on mobile at reduced opacity, hover-reveal on desktop */}

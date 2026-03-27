@@ -1,9 +1,81 @@
 import OpenAI from "openai";
+import { detectAssistantIntent } from "./assistant-intent";
+import {
+  formatMaterialRetrievalForPrompt,
+  retrieveRelevantMaterialExcerpts,
+} from "./class-materials";
 import type { ChatMessage, ReminderPreference, SchoolCalendarEntry, SchoolClass, StudentTask } from "../types";
 import { buildCalendarContext, getEffectiveDays } from "./schedule";
 import { formatApTemplateForPrompt, getApTemplate } from "./ap-course-templates";
+import { deriveScheduleLabel, formatRotationBadge, getClassRotationDays, normalizeRotationDays } from "./class-rotation";
 
 const client = new OpenAI(); // Reads OPENAI_API_KEY from environment automatically
+
+// ── Name normalization ───────────────────────────────────────────────────────
+
+/** Capitalize just the first letter, lowercase the rest. */
+function capitalizeWord(word: string): string {
+  if (!word) return word;
+  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+}
+
+/**
+ * Normalize a teacher name to proper title case.
+ * - "mr johnson"   → "Mr. Johnson"
+ * - "mrs rubin"    → "Mrs. Rubin"
+ * - "ms. smith"    → "Ms. Smith"
+ * - "Dr jones"     → "Dr. Jones"
+ * - Already correct input is returned cleaned up.
+ */
+export function normalizeTeacherName(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+
+  const TITLE_MAP: Record<string, string> = {
+    mr: "Mr.",
+    mrs: "Mrs.",
+    ms: "Ms.",
+    miss: "Ms.",
+    dr: "Dr.",
+    prof: "Prof.",
+    professor: "Prof.",
+  };
+
+  const lower = trimmed.toLowerCase();
+
+  for (const [prefix, title] of Object.entries(TITLE_MAP)) {
+    // Match "mr johnson", "mr. johnson", "mr.johnson"
+    const regex = new RegExp(`^${prefix}\\.?\\s*(.+)$`, "i");
+    const m = lower.match(regex);
+    if (m) {
+      const rest = trimmed
+        .slice(prefix.length)
+        .replace(/^\.?\s*/, "")
+        .split(/\s+/)
+        .map(capitalizeWord)
+        .join(" ");
+      return `${title} ${rest}`.trim();
+    }
+  }
+
+  // No recognized title prefix — just apply title case
+  return trimmed.split(/\s+/).map(capitalizeWord).join(" ");
+}
+
+/**
+ * Clean up an AI-generated task title.
+ * Trims, removes leading articles/filler, and capitalizes the first letter.
+ */
+export function normalizeTaskTitle(raw: string): string {
+  let title = raw.trim();
+  if (!title) return title;
+
+  // Strip common leading filler words the AI might emit
+  title = title.replace(/^(a |an |the |my |i need to |i have to |do )/i, "");
+
+  // Capitalize first character
+  return title.charAt(0).toUpperCase() + title.slice(1);
+}
 
 export async function parseNaturalLanguageTask(
   input: string,
@@ -48,7 +120,7 @@ Return only valid JSON.`;
     }
 
     return {
-      title: parsed.title || input,
+      title: normalizeTaskTitle(parsed.title || input),
       classId,
       dueAt: parsed.dueAt ?? undefined,
       type: parsed.type ?? undefined,
@@ -86,7 +158,7 @@ export async function parseNaturalLanguageSchedule(
 
 Each class object must have:
 - name: string — the class name
-- scheduleLabel: "A" | "B" | null — if the class is on A-day or B-day rotation; null means it meets on a fixed weekly schedule
+- rotationDays: array of "A" or "B" — [] means fixed weekday schedule, ["A"] means A-day, ["B"] means B-day, ["A","B"] means both A and B
 - days: array of weekday strings — the specific weekdays this class meets, e.g. ["monday","wednesday","friday"]. Use [] if the class follows pure A/B rotation with no specific weekday pattern mentioned.
 - startTime: "HH:MM" 24-hour format (e.g. "08:00", "13:30"). Use "08:00" if not specified.
 - endTime: "HH:MM" 24-hour format. Use "09:00" if not specified.
@@ -96,8 +168,12 @@ Each class object must have:
 
 Valid weekday values: "monday" "tuesday" "wednesday" "thursday" "friday" "saturday" "sunday"
 
+Important A/B rule:
+- If the student clearly uses an A/B rotation and says a class is "every day", "daily", or "every school day", that means the class belongs to BOTH rotation days, so use rotationDays: ["A","B"] and days: [] unless specific weekdays were also stated.
+- Do not convert "every day" in an A/B rotation context into monday-friday unless the student explicitly gives weekday-based meetings.
+
 Return format — an object with a single "classes" key:
-{ "classes": [ { "name": "...", "scheduleLabel": null, "days": [...], "startTime": "HH:MM", "endTime": "HH:MM", "teacherName": null, "teacherEmail": null, "room": null } ] }`;
+{ "classes": [ { "name": "...", "rotationDays": [], "days": [...], "startTime": "HH:MM", "endTime": "HH:MM", "teacherName": null, "teacherEmail": null, "room": null } ] }`;
 
   try {
     const response = await client.chat.completions.create({
@@ -113,18 +189,31 @@ Return format — an object with a single "classes" key:
     const jsonText = rawText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
     const parsed = JSON.parse(jsonText) as { classes: Array<Record<string, unknown>> };
 
-    return (parsed.classes ?? []).map((c, i) => ({
-      name: typeof c.name === "string" ? c.name : "Unnamed Class",
-      scheduleLabel:
-        c.scheduleLabel === "A" ? "A" : c.scheduleLabel === "B" ? "B" : undefined,
-      days: Array.isArray(c.days) ? (c.days as string[]).filter(Boolean) as SchoolClass["days"] : [],
-      startTime: typeof c.startTime === "string" ? c.startTime : "08:00",
-      endTime: typeof c.endTime === "string" ? c.endTime : "09:00",
-      teacherName: typeof c.teacherName === "string" ? c.teacherName : undefined,
-      teacherEmail: typeof c.teacherEmail === "string" ? c.teacherEmail : undefined,
-      room: typeof c.room === "string" ? c.room : undefined,
-      color: CLASS_COLORS[i % CLASS_COLORS.length],
-    }));
+    return (parsed.classes ?? []).map((c, i) => {
+      const rotationDays = normalizeRotationDays(
+        Array.isArray(c.rotationDays)
+          ? (c.rotationDays as string[]).filter(
+              (day): day is "A" | "B" => day === "A" || day === "B",
+            )
+          : [],
+      );
+
+      return {
+        name: typeof c.name === "string" ? c.name : "Unnamed Class",
+        rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
+        scheduleLabel: deriveScheduleLabel(rotationDays),
+        days: Array.isArray(c.days)
+          ? ((c.days as string[]).filter(Boolean) as SchoolClass["days"])
+          : [],
+        startTime: typeof c.startTime === "string" ? c.startTime : "08:00",
+        endTime: typeof c.endTime === "string" ? c.endTime : "09:00",
+        teacherName: typeof c.teacherName === "string" ? normalizeTeacherName(c.teacherName) : undefined,
+        teacherEmail:
+          typeof c.teacherEmail === "string" ? c.teacherEmail : undefined,
+        room: typeof c.room === "string" ? c.room : undefined,
+        color: CLASS_COLORS[i % CLASS_COLORS.length],
+      };
+    });
   } catch {
     return [];
   }
@@ -179,6 +268,7 @@ export async function answerWorkloadQuestion(
   calendarEntries?: SchoolCalendarEntry[]
 ): Promise<ChatMessage> {
   const today = new Date();
+  const assistantIntent = detectAssistantIntent(message, classes);
   const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const readableDate = today.toLocaleDateString("en-US", {
     weekday: "long",
@@ -202,12 +292,14 @@ export async function answerWorkloadQuestion(
   const classKnowledgeSection = mentionedClass
     ? buildClassKnowledgeSection(mentionedClass)
     : "";
+  const materialRetrieval = retrieveRelevantMaterialExcerpts({ message, classes });
 
   // Build class schedule lines with per-day meeting detail and A/B labels
   const classLines = classes
     .map((c) => {
       const effectiveDays = getEffectiveDays(c);
-      const labelNote = c.scheduleLabel ? ` [${c.scheduleLabel}-Day rotation]` : "";
+      const rotationBadge = formatRotationBadge(c.rotationDays, c.scheduleLabel);
+      const labelNote = rotationBadge ? ` [${rotationBadge} rotation]` : "";
       const teacherNote = c.teacherName ? ` — teacher: ${c.teacherName}` : "";
       const emailNote = c.teacherEmail ? ` <${c.teacherEmail}>` : "";
       const roomNote = c.room ? `, room: ${c.room}` : "";
@@ -219,7 +311,13 @@ export async function answerWorkloadQuestion(
       }
       const timeStr =
         c.startTime && c.endTime ? `, ${c.startTime}–${c.endTime}` : "";
-      const daysStr = effectiveDays.length > 0 ? ` meets ${effectiveDays.join(", ")}` : " (pure A/B rotation, no fixed days)";
+      const rotationDays = getClassRotationDays(c);
+      const daysStr =
+        effectiveDays.length > 0
+          ? ` meets ${effectiveDays.join(", ")}`
+          : rotationDays.length > 0
+            ? " (rotation-based, no fixed weekdays)"
+            : " (no meeting days saved)";
       return `* ${c.name}${labelNote}${daysStr}${timeStr}${teacherNote}${emailNote}${roomNote}`;
     })
     .join("\n");
@@ -245,6 +343,14 @@ export async function answerWorkloadQuestion(
     })
     .join("\n");
 
+  const materialInventoryLines = classes
+    .filter((schoolClass) => (schoolClass.materials?.length ?? 0) > 0)
+    .map(
+      (schoolClass) =>
+        `* ${schoolClass.name}: ${schoolClass.materials?.length ?? 0} saved material(s)`,
+    )
+    .join("\n");
+
   const dailySummaryLine = reminderPreferences.dailySummaryEnabled
     ? `* Daily summary: enabled at ${reminderPreferences.dailySummaryTime ?? "a saved time"}`
     : "* Daily summary: disabled";
@@ -260,11 +366,20 @@ export async function answerWorkloadQuestion(
 School calendar context:
 ${calendarSection}
 
+Detected intent:
+${assistantIntent}
+
 The student's classes are:
 ${classLines || "No classes on record."}${classKnowledgeSection}
 
 The student's current tasks are:
 ${taskLines || "No tasks on record."}
+
+Saved class material inventory:
+${materialInventoryLines || "No class materials on record."}
+
+Relevant class material retrieval for this message:
+${formatMaterialRetrievalForPrompt(materialRetrieval)}
 
 The student's reminder preferences are:
 ${dailySummaryLine}
@@ -277,13 +392,7 @@ Start with a short direct answer — one or two sentences, no preamble. Then add
 
 Keep answers concise. Bold class names, due dates, and key deadlines. Use section headings only for multi-day or multi-part answers. Place 1–2 emojis naturally where they add clarity (dates, completed items) — not on every line. Sound direct and student-friendly, not robotic or motivational.
 
-Never invent information not found above. For teacher questions, answer from the class list — if no teacher is recorded, say so in one sentence. For email drafting, use teacher info from context and note you can draft but not send.
-
-Examples:
-- "Do I have school Friday?" → one sentence, no bullets
-- "What do I have this week?" → brief intro, then ### Monday / ### Tuesday with bullets under each
-- "What should I work on tonight?" → direct answer with bullets if multiple items, optional follow-up offer
-- "Who teaches AP Bio?" → one sentence from class list`;
+Never invent information not found above. For teacher questions, answer from the class list — if no teacher is recorded, say so in one sentence. For email drafting, use teacher info from context and note you can draft but not send. Only say you used notes/materials when retrieved excerpts are actually present. If no relevant excerpts were found, say so plainly.`;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",

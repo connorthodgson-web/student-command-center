@@ -1,21 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTheme } from "../../lib/theme-context";
-import { ACCENT_META } from "../../lib/theme-context";
-import type { ThemeMode, AccentColor } from "../../lib/theme-context";
+import { useTheme, ACCENT_META, SIDEBAR_META } from "../../lib/theme-context";
+import type { ThemeMode, AccentColor, SidebarTheme } from "../../lib/theme-context";
 import { useReminderStore } from "../../lib/reminder-store";
 import { loadProfile, saveProfile } from "../../lib/profile";
-import type { StudentProfile, AssistantTone } from "../../lib/profile";
+import type { StudentProfile, AssistantTone, AiModel } from "../../lib/profile";
 import { useClasses } from "../../lib/stores/classStore";
+import { MessagingSettingsCard } from "../../components/MessagingSettingsCard";
+import { ReminderDeliveryCard } from "../../components/ReminderDeliveryCard";
 import { ScheduleSetupInput } from "../../components/ScheduleSetupInput";
 import { ScheduleCard } from "../../components/ScheduleCard";
 import { detectApCourse } from "../../lib/ap-detection";
+import {
+  deriveScheduleLabel,
+  getRotationSelectionValue,
+  rotationSelectionToDays,
+} from "../../lib/class-rotation";
 import type { ClassMeetingTime, SchoolClass, Weekday } from "../../types";
 
 // ── Tab system ────────────────────────────────────────────────────────────────
 
-type Tab = "appearance" | "notifications" | "profile" | "schedule";
+type Tab = "appearance" | "notifications" | "messaging" | "profile" | "schedule";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "appearance",    label: "Appearance",    icon: "◑" },
@@ -23,6 +29,8 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "profile",       label: "Profile",       icon: "◉" },
   { id: "schedule",      label: "Schedule",      icon: "◷" },
 ];
+
+TABS.splice(1, 0, { id: "messaging", label: "Messaging", icon: "SMS" });
 
 // ── Schedule tab constants ─────────────────────────────────────────────────────
 
@@ -45,7 +53,7 @@ const WEEKDAYS: { label: string; value: Weekday }[] = [
   { label: "Sun", value: "sunday" },
 ];
 
-type ScheduleLabel = "A" | "B" | "";
+type RotationOption = "" | "A" | "B" | "AB";
 type DayTime = { start: string; end: string };
 
 // ── Mode picker card ──────────────────────────────────────────────────────────
@@ -185,7 +193,7 @@ function ToggleRow({
 // ── Appearance tab ────────────────────────────────────────────────────────────
 
 function AppearanceTab() {
-  const { mode, accent, setMode, setAccent } = useTheme();
+  const { mode, accent, sidebar, setMode, setAccent, setSidebar } = useTheme();
 
   const modes: {
     id: ThemeMode;
@@ -290,6 +298,43 @@ function AppearanceTab() {
         </div>
       </section>
 
+      {/* Sidebar color */}
+      <section>
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-foreground">Navigation color</h2>
+          <p className="mt-1 text-sm text-muted">
+            Changes the color of the sidebar and header navigation panels.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {(Object.entries(SIDEBAR_META) as [SidebarTheme, typeof SIDEBAR_META[SidebarTheme]][]).map(
+            ([key, meta]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSidebar(key)}
+                className={`relative flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all ${
+                  sidebar === key
+                    ? "border-sidebar-accent bg-sidebar-accent/10"
+                    : "border-border bg-card hover:bg-surface"
+                }`}
+              >
+                {sidebar === key && (
+                  <span className="absolute right-2.5 top-2.5 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-hero">
+                    ✓
+                  </span>
+                )}
+                <span
+                  className="h-7 w-7 shrink-0 rounded-full shadow-sm"
+                  style={{ backgroundColor: meta.bg }}
+                />
+                <span className="text-sm font-medium text-foreground">{meta.label}</span>
+              </button>
+            )
+          )}
+        </div>
+      </section>
+
       {/* About this section */}
       <section className="rounded-2xl border border-dashed border-border bg-surface/50 p-5">
         <p className="text-xs font-semibold uppercase tracking-widest text-muted">About</p>
@@ -305,10 +350,24 @@ function AppearanceTab() {
 // ── Notifications tab ─────────────────────────────────────────────────────────
 
 function NotificationsTab() {
-  const { preferences, updatePreferences } = useReminderStore();
+  const { preferences, loading, updatePreferences } = useReminderStore();
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const save = async (partial: Partial<typeof preferences>, key: string) => {
+    setSavingKey(key);
+    setSaveError(null);
+    try {
+      await updatePreferences(partial);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Failed to save reminder settings.");
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
   const toggle = (key: "dailySummaryEnabled" | "tonightSummaryEnabled" | "dueSoonRemindersEnabled") => {
-    updatePreferences({ [key]: !preferences[key] });
+    void save({ [key]: !preferences[key] }, key);
   };
 
   return (
@@ -332,6 +391,18 @@ function NotificationsTab() {
             enabled={preferences.dailySummaryEnabled}
             onToggle={() => toggle("dailySummaryEnabled")}
           />
+          <label className="block rounded-xl border border-border bg-background px-4 py-3">
+            <span className="mb-1.5 block text-xs font-medium text-muted">Daily summary time</span>
+            <input
+              type="time"
+              value={preferences.dailySummaryTime ?? "07:00"}
+              disabled={loading || savingKey === "dailySummaryTime"}
+              onChange={(event) =>
+                void save({ dailySummaryTime: event.target.value }, "dailySummaryTime")
+              }
+              className="w-full bg-transparent text-sm text-foreground outline-none"
+            />
+          </label>
           <ToggleRow
             title="Tonight summary"
             description={
@@ -342,6 +413,18 @@ function NotificationsTab() {
             enabled={preferences.tonightSummaryEnabled}
             onToggle={() => toggle("tonightSummaryEnabled")}
           />
+          <label className="block rounded-xl border border-border bg-background px-4 py-3">
+            <span className="mb-1.5 block text-xs font-medium text-muted">Tonight summary time</span>
+            <input
+              type="time"
+              value={preferences.tonightSummaryTime ?? "19:00"}
+              disabled={loading || savingKey === "tonightSummaryTime"}
+              onChange={(event) =>
+                void save({ tonightSummaryTime: event.target.value }, "tonightSummaryTime")
+              }
+              className="w-full bg-transparent text-sm text-foreground outline-none"
+            />
+          </label>
         </div>
       </section>
 
@@ -364,15 +447,41 @@ function NotificationsTab() {
             enabled={preferences.dueSoonRemindersEnabled}
             onToggle={() => toggle("dueSoonRemindersEnabled")}
           />
+          <label className="block rounded-xl border border-border bg-background px-4 py-3">
+            <span className="mb-1.5 block text-xs font-medium text-muted">Hours before due date</span>
+            <input
+              type="number"
+              min={0}
+              max={168}
+              step={1}
+              value={preferences.dueSoonHoursBefore ?? 6}
+              disabled={loading || savingKey === "dueSoonHoursBefore"}
+              onChange={(event) =>
+                void save(
+                  { dueSoonHoursBefore: Number(event.target.value) || 0 },
+                  "dueSoonHoursBefore",
+                )
+              }
+              className="w-full bg-transparent text-sm text-foreground outline-none"
+            />
+          </label>
         </div>
       </section>
+
+      {saveError && (
+        <section className="rounded-2xl border border-accent-rose bg-accent-rose px-5 py-4 text-sm text-accent-rose-foreground">
+          {saveError}
+        </section>
+      )}
+
+      <ReminderDeliveryCard />
 
       {/* Delivery note */}
       <section className="rounded-2xl border border-dashed border-border bg-surface/50 p-5">
         <p className="text-xs font-semibold uppercase tracking-widest text-muted">Delivery</p>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          Reminders are delivered in-app. Email and push notification support is coming soon.
-          You can also ask the assistant to create custom automations from the{" "}
+          Email and push notification support are still coming soon. You can also ask the
+          assistant to create custom automations from the{" "}
           <a href="/automations" className="font-medium text-accent-green-foreground underline underline-offset-2">
             Automations
           </a>{" "}
@@ -491,6 +600,44 @@ function ProfileTab() {
         </div>
       </section>
 
+      {/* AI model selection */}
+      <section>
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-foreground">AI response quality</h2>
+          <p className="mt-1 text-sm text-muted">
+            Choose the trade-off between speed and answer depth.
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          {(
+            [
+              { value: "fast",     label: "Fast",     description: "Quick answers, lower cost" },
+              { value: "balanced", label: "Balanced",  description: "Great everyday quality" },
+              { value: "powerful", label: "Powerful",  description: "Deeper reasoning, best for hard problems" },
+            ] as { value: AiModel; label: string; description: string }[]
+          ).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => update({ aiModel: opt.value })}
+              className={`relative flex flex-col gap-1.5 rounded-2xl border-2 p-4 text-left transition-all ${
+                (profile.aiModel ?? "balanced") === opt.value
+                  ? "border-sidebar-accent bg-sidebar-accent/10 shadow-card-md"
+                  : "border-border bg-card hover:bg-surface"
+              }`}
+            >
+              {(profile.aiModel ?? "balanced") === opt.value && (
+                <span className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-[#0f2117]">
+                  ✓
+                </span>
+              )}
+              <span className="text-sm font-semibold text-foreground">{opt.label}</span>
+              <span className="text-[11px] text-muted">{opt.description}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
       {/* Save button */}
       <div className="flex items-center gap-3">
         <button
@@ -502,6 +649,65 @@ function ProfileTab() {
         </button>
         <p className="text-xs text-muted">Stored locally in your browser.</p>
       </div>
+
+      {/* Capabilities section */}
+      <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-foreground">What your assistant can do</h2>
+          <p className="mt-1 text-sm text-muted">
+            Everything your AI assistant supports — use any of these anytime from the chat.
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {[
+            {
+              icon: "🎓",
+              title: "Tutoring",
+              desc: "Step-by-step help, quizzes, study plans, concept explanations, and homework support — tailored to your classes.",
+            },
+            {
+              icon: "📎",
+              title: "Uploads & images",
+              desc: "Share photos of notes, worksheets, or textbook pages. The assistant reads and works with them directly.",
+            },
+            {
+              icon: "🔔",
+              title: "Reminders",
+              desc: "Get daily summaries, tonight overviews, and due-date alerts. Customize timing in Notifications settings.",
+            },
+            {
+              icon: "🎙️",
+              title: "Voice input",
+              desc: "Speak your questions or tasks. Tap the mic icon in the chat to start talking instead of typing.",
+            },
+            {
+              icon: "📋",
+              title: "Task capture",
+              desc: "Say \"Bio test Friday\" and the assistant parses it into a task with the right due date automatically.",
+            },
+            {
+              icon: "📅",
+              title: "Schedule awareness",
+              desc: "The assistant knows your classes, teachers, and schedule — and uses that context in every conversation.",
+            },
+          ].map((cap) => (
+            <div key={cap.title} className="flex items-start gap-3 rounded-xl border border-border bg-background px-4 py-3.5">
+              <span className="text-lg leading-none mt-0.5">{cap.icon}</span>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{cap.title}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted">{cap.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <a
+          href="/chat"
+          className="mt-4 flex items-center gap-2 text-xs font-medium text-sidebar-accent hover:underline"
+        >
+          <span className="text-[10px]">✦</span>
+          Open assistant to try any of these
+        </a>
+      </section>
     </div>
   );
 }
@@ -529,7 +735,7 @@ function ScheduleTab() {
   const [syllabusText, setSyllabusText] = useState("");
   const [classNotes, setClassNotes] = useState("");
   const [color, setColor] = useState(COLOR_SWATCHES[0].value);
-  const [scheduleLabel, setScheduleLabel] = useState<ScheduleLabel>("");
+  const [rotationOption, setRotationOption] = useState<RotationOption>("");
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const inputClass =
@@ -571,7 +777,7 @@ function ScheduleTab() {
     setSyllabusText("");
     setClassNotes("");
     setColor(COLOR_SWATCHES[0].value);
-    setScheduleLabel("");
+    setRotationOption("");
     setValidationError(null);
     setMutationError(null);
     setEditingClassId(null);
@@ -586,7 +792,7 @@ function ScheduleTab() {
     setSyllabusText(cls.syllabusText ?? "");
     setClassNotes(cls.classNotes ?? "");
     setColor(cls.color ?? COLOR_SWATCHES[0].value);
-    setScheduleLabel((cls.scheduleLabel as ScheduleLabel) ?? "");
+    setRotationOption(getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel));
     if (cls.meetings && cls.meetings.length > 0) {
       setDays(cls.meetings.map((m) => m.day));
       setUsePerDayTimes(true);
@@ -643,6 +849,7 @@ function ScheduleTab() {
 
     try {
       const apInfo = detectApCourse(name.trim());
+      const rotationDays = rotationSelectionToDays(rotationOption);
       const classData = {
         name: name.trim(),
         teacherName: teacherName.trim() || undefined,
@@ -656,7 +863,8 @@ function ScheduleTab() {
         syllabusText: syllabusText.trim() || undefined,
         classNotes: classNotes.trim() || undefined,
         color,
-        scheduleLabel: scheduleLabel || undefined,
+        rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
+        scheduleLabel: deriveScheduleLabel(rotationDays),
         isApCourse: apInfo.isApCourse || undefined,
         apCourseKey: apInfo.apCourseKey ?? undefined,
       };
@@ -964,30 +1172,32 @@ function ScheduleTab() {
                 Rotating schedule <span className="text-xs font-normal text-muted">(optional)</span>
               </legend>
               <p className="mb-2.5 text-xs text-muted">
-                If your school uses A/B day rotation, label this class so the assistant knows which rotation it belongs to.
+                If your school uses A/B day rotation, mark whether this class is on A-day, B-day, or both.
               </p>
               <div className="flex flex-wrap gap-2">
-                {(["", "A", "B"] as ScheduleLabel[]).map((label) => (
+                {(["", "A", "B", "AB"] as RotationOption[]).map((value) => (
                   <label
-                    key={label === "" ? "none" : label}
+                    key={value === "" ? "none" : value}
                     className={`flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
-                      scheduleLabel === label
-                        ? label === "A"
+                      rotationOption === value
+                        ? value === "A"
                           ? "border-accent-blue-foreground bg-accent-blue font-medium text-accent-blue-foreground"
-                          : label === "B"
+                          : value === "B"
                             ? "border-accent-purple-foreground bg-accent-purple font-medium text-accent-purple-foreground"
+                            : value === "AB"
+                              ? "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
                             : "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
                         : "border-border bg-card text-muted hover:bg-surface"
                     }`}
                   >
                     <input
                       type="radio"
-                      name="scheduleLabel"
+                      name="rotationOption"
                       className="sr-only"
-                      checked={scheduleLabel === label}
-                      onChange={() => setScheduleLabel(label)}
+                      checked={rotationOption === value}
+                      onChange={() => setRotationOption(value)}
                     />
-                    {label === "" ? "No rotation" : `${label}-Day`}
+                    {value === "" ? "No rotation" : value === "AB" ? "A + B" : `${value}-Day`}
                   </label>
                 ))}
               </div>
@@ -1130,6 +1340,7 @@ export default function SettingsPage() {
       {/* Tab content */}
       <div className="mx-auto max-w-2xl px-6 py-8 md:px-10">
         {activeTab === "appearance"    && <AppearanceTab />}
+        {activeTab === "messaging"     && <MessagingSettingsCard />}
         {activeTab === "notifications" && <NotificationsTab />}
         {activeTab === "profile"       && <ProfileTab />}
         {activeTab === "schedule"      && <ScheduleTab />}

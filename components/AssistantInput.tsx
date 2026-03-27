@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatDueDate } from "../lib/datetime";
+import { useBrowserVoiceInput } from "../lib/voice";
 import { useCalendar } from "../lib/stores/calendarStore";
 import { useScheduleConfig } from "../lib/stores/scheduleConfig";
 import { getAbOverrideForDate, getTodayDateString } from "../lib/schedule";
+import { deriveScheduleLabel, getRotationSelectionValue, rotationSelectionToDays } from "../lib/class-rotation";
 import type {
   ChatMessage,
   ReminderPreference,
@@ -35,7 +37,15 @@ type AssistantInputProps = {
   tasks: StudentTask[];
   classes: SchoolClass[];
   reminderPreferences: ReminderPreference;
-  onTaskConfirmed: (task: StudentTask) => void;
+  onTaskConfirmed: (task: {
+    title: string;
+    description?: string;
+    classId?: string;
+    dueAt?: string;
+    type?: StudentTask["type"];
+    reminderAt?: string;
+    source?: StudentTask["source"];
+  }) => Promise<unknown>;
   onSchedulesConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => Promise<void> | void;
   placeholder?: string;
 };
@@ -63,18 +73,34 @@ export function AssistantInput({
   const [editableSchedule, setEditableSchedule] = useState<Array<Omit<SchoolClass, "id">> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [lastTranscript, setLastTranscript] = useState<string | null>(null);
 
   const { todayDayType } = useScheduleConfig();
   const { entries: calendarEntries } = useCalendar();
+  const {
+    state: voiceState,
+    error: voiceError,
+    isSupported: voiceSupported,
+    isListening,
+    isTranscribing,
+    start: startListening,
+    stop: stopListening,
+    clearError: clearVoiceError,
+  } = useBrowserVoiceInput((transcript) => {
+    setLastTranscript(transcript);
+    setInput((prev) => (prev ? `${prev.trimEnd()} ${transcript}` : transcript));
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = input.trim();
     if (!trimmed) return;
 
+    stopListening();
     setStatus("loading");
     setTaskPreview(null);
     setErrorMessage(null);
+    setLastTranscript(null);
 
     try {
       const todayDateStr = getTodayDateString();
@@ -103,7 +129,7 @@ export function AssistantInput({
       if (json.intent === "setup_schedule") {
         if (json.classes.length === 0) {
           setErrorMessage(
-            'Couldn\'t parse any classes from that description. Try being more specific, for example: "English A-day 8-9:15, Math Mon/Wed/Fri 1-1:50."'
+            'Couldn\'t parse any classes from that description. Try being more specific, for example: "English A-day 8-9:15, Math Mon/Wed/Fri 1-1:50."',
           );
           setStatus("error");
         } else {
@@ -114,7 +140,6 @@ export function AssistantInput({
         setTaskPreview(json.task);
         setStatus("task-preview");
       } else {
-        // Chat intent → hand off to the full assistant
         router.push(`/chat?q=${encodeURIComponent(trimmed)}`);
         setStatus("idle");
         setInput("");
@@ -125,26 +150,25 @@ export function AssistantInput({
     }
   };
 
-  const handleConfirmTask = () => {
+  const handleConfirmTask = async () => {
     if (!taskPreview) return;
-    const now = new Date().toISOString();
-    const task: StudentTask = {
-      id: crypto.randomUUID(),
-      title: taskPreview.title ?? input,
-      description: taskPreview.description,
-      classId: taskPreview.classId,
-      dueAt: taskPreview.dueAt,
-      type: taskPreview.type,
-      reminderAt: taskPreview.reminderAt,
-      status: "todo",
-      source: "ai-parsed",
-      createdAt: now,
-      updatedAt: now,
-    };
-    onTaskConfirmed(task);
-    setTaskPreview(null);
-    setInput("");
-    setStatus("idle");
+    try {
+      await onTaskConfirmed({
+        title: taskPreview.title ?? input,
+        description: taskPreview.description,
+        classId: taskPreview.classId,
+        dueAt: taskPreview.dueAt,
+        type: taskPreview.type,
+        reminderAt: taskPreview.reminderAt,
+        source: "ai-parsed",
+      });
+      setTaskPreview(null);
+      setInput("");
+      setStatus("idle");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to save task.");
+      setStatus("error");
+    }
   };
 
   const handleCancelTask = () => {
@@ -177,7 +201,7 @@ export function AssistantInput({
 
   const updateEditableClass = (i: number, patch: Partial<Omit<SchoolClass, "id">>) => {
     setEditableSchedule((prev) =>
-      prev?.map((cls, idx) => (idx === i ? { ...cls, ...patch } : cls)) ?? null
+      prev?.map((cls, idx) => (idx === i ? { ...cls, ...patch } : cls)) ?? null,
     );
   };
 
@@ -199,11 +223,39 @@ export function AssistantInput({
     : null;
 
   const isSubmitting = status === "loading";
+  const voiceStatusText = isListening
+    ? "Listening - speak now"
+    : isTranscribing
+      ? "Transcribing your speech..."
+      : voiceState === "error"
+        ? voiceError
+        : voiceSupported
+          ? "Use the mic to speak, then edit the transcript if needed."
+          : "Voice input is not supported in this browser.";
 
   return (
     <div className="space-y-3">
       {status !== "task-preview" && status !== "schedule-preview" && (
         <form onSubmit={handleSubmit} className="space-y-3">
+          {lastTranscript && input.trim() && (
+            <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3">
+              <p className="text-xs text-white/70">Voice transcript ready. You can edit it before sending.</p>
+            </div>
+          )}
+
+          {voiceError && (
+            <div className="flex items-start justify-between gap-3 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3">
+              <p className="text-sm text-red-300">{voiceError}</p>
+              <button
+                type="button"
+                onClick={clearVoiceError}
+                className="shrink-0 text-xs font-medium text-red-200 underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -218,7 +270,31 @@ export function AssistantInput({
             disabled={isSubmitting}
             className="w-full resize-none rounded-2xl border border-white/20 bg-white/10 px-4 py-3.5 text-sm text-white placeholder:text-white/40 outline-none transition focus:border-white/40 focus:bg-white/15 focus:ring-2 focus:ring-white/10 disabled:opacity-60"
           />
-          <div className="flex items-center gap-3">
+
+          <div className="flex flex-wrap items-center gap-3">
+            {voiceSupported && (
+              <button
+                type="button"
+                onClick={isListening || isTranscribing ? stopListening : startListening}
+                disabled={isSubmitting}
+                className={`flex h-10 w-10 items-center justify-center rounded-full border transition disabled:opacity-40 ${
+                  isListening || isTranscribing
+                    ? "border-red-300/40 bg-red-400/20 text-red-100"
+                    : "border-white/20 text-white/80 hover:bg-white/10"
+                }`}
+                title={isListening || isTranscribing ? "Stop voice input" : "Speak to the assistant"}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.8}
+                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4M12 3a4 4 0 014 4v5a4 4 0 01-8 0V7a4 4 0 014-4z"
+                  />
+                </svg>
+              </button>
+            )}
+
             <button
               type="submit"
               disabled={isSubmitting || !input.trim()}
@@ -226,11 +302,13 @@ export function AssistantInput({
             >
               {isSubmitting ? "Thinking..." : "Send"}
             </button>
-            <p className="text-xs text-white/40">Enter to send · Shift+Enter for new line</p>
+
+            <p className={`text-xs ${voiceState === "error" ? "text-red-200" : "text-white/40"}`}>
+              {voiceStatusText}
+            </p>
           </div>
         </form>
       )}
-
 
       {status === "task-preview" && taskPreview && (
         <div className="space-y-4 rounded-2xl border border-white/15 bg-hero-mid px-5 py-5">
@@ -244,7 +322,7 @@ export function AssistantInput({
           <dl className="space-y-2 rounded-xl border border-white/10 bg-hero px-4 py-3 text-sm">
             <div className="flex gap-3">
               <dt className="w-20 shrink-0 font-medium text-white/50">Title</dt>
-              <dd className="font-semibold text-white">{taskPreview.title ?? "—"}</dd>
+              <dd className="font-semibold text-white">{taskPreview.title ?? "-"}</dd>
             </div>
             <div className="flex gap-3">
               <dt className="w-20 shrink-0 font-medium text-white/50">Type</dt>
@@ -285,7 +363,7 @@ export function AssistantInput({
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={handleConfirmTask}
+              onClick={() => void handleConfirmTask()}
               className="rounded-full bg-sidebar-accent px-5 py-2.5 text-sm font-semibold text-hero transition hover:opacity-90"
             >
               Add task
@@ -305,8 +383,7 @@ export function AssistantInput({
         <div className="space-y-4 rounded-2xl border border-white/15 bg-hero-mid px-5 py-5">
           <div>
             <p className="text-sm font-semibold text-white">
-              Got it — {editableSchedule.length}{" "}
-              {editableSchedule.length === 1 ? "class" : "classes"} found
+              Got it - {editableSchedule.length} {editableSchedule.length === 1 ? "class" : "classes"} found
             </p>
             <p className="mt-0.5 text-xs text-white/50">
               Review and fill in any missing details, then confirm to add them all.
@@ -319,7 +396,6 @@ export function AssistantInput({
                 key={i}
                 className="space-y-3 rounded-xl border border-white/10 bg-hero px-4 py-3"
               >
-                {/* Class name row */}
                 <div className="flex items-center gap-2">
                   <div
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -338,11 +414,10 @@ export function AssistantInput({
                     className="shrink-0 text-xs text-white/30 transition hover:text-red-400"
                     title="Remove class"
                   >
-                    ×
+                    x
                   </button>
                 </div>
 
-                {/* Teacher + Room */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex items-center gap-1.5 text-xs text-white/50">
                     <span className="w-12 shrink-0">Teacher</span>
@@ -370,7 +445,6 @@ export function AssistantInput({
                   </div>
                 </div>
 
-                {/* Time */}
                 <div className="flex items-center gap-2 text-xs text-white/50">
                   <span className="shrink-0">Time</span>
                   <input
@@ -380,7 +454,7 @@ export function AssistantInput({
                     className="w-16 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white placeholder:text-white/30 outline-none focus:border-white/30 focus:bg-white/10"
                     placeholder="09:00"
                   />
-                  <span>–</span>
+                  <span>-</span>
                   <input
                     type="text"
                     value={cls.endTime}
@@ -390,7 +464,6 @@ export function AssistantInput({
                   />
                 </div>
 
-                {/* Days */}
                 <div className="flex flex-wrap gap-1">
                   {WEEKDAYS.map(({ label, value }) => (
                     <button
@@ -408,25 +481,32 @@ export function AssistantInput({
                   ))}
                 </div>
 
-                {/* Rotation */}
                 <div className="flex items-center gap-2 text-xs text-white/50">
                   <span>Rotation</span>
-                  {(["A", "B", null] as const).map((label) => (
+                  {(["", "A", "B", "AB"] as const).map((value) => (
                     <button
-                      key={String(label)}
+                      key={value || "none"}
                       type="button"
-                      onClick={() => updateEditableClass(i, { scheduleLabel: label ?? undefined })}
+                      onClick={() => {
+                        const rotationDays = rotationSelectionToDays(value);
+                        updateEditableClass(i, {
+                          rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
+                          scheduleLabel: deriveScheduleLabel(rotationDays),
+                        });
+                      }}
                       className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
-                        cls.scheduleLabel === (label ?? undefined)
-                          ? label === "A"
+                        getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel) === value
+                          ? value === "A"
                             ? "border border-blue-500/40 bg-blue-500/30 text-blue-300"
-                            : label === "B"
+                            : value === "B"
                               ? "border border-purple-500/40 bg-purple-500/30 text-purple-300"
-                              : "border border-white/20 bg-white/10 text-white/70"
+                              : value === "AB"
+                                ? "border border-emerald-500/40 bg-emerald-500/30 text-emerald-300"
+                                : "border border-white/20 bg-white/10 text-white/70"
                           : "border border-white/10 text-white/40 hover:border-white/25 hover:text-white/60"
                       }`}
                     >
-                      {label === null ? "None" : `${label}-Day`}
+                      {value === "" ? "None" : value === "AB" ? "A+B" : `${value}-Day`}
                     </button>
                   ))}
                 </div>

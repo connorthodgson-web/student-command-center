@@ -66,6 +66,53 @@
   --accent-purple-fg: #c090f0;
 }
 
+/* ── Sidebar theme presets ────────────────────────────────────────── */
+/* Applied via data-sidebar attribute on <html>. Independent of light/dark. */
+
+/* Ocean — deep navy */
+[data-sidebar="ocean"] {
+  --hero:           #091829;
+  --hero-mid:       #0c2138;
+  --hero-light:     #102848;
+  --sidebar:        #091829;
+  --sidebar-active: #102848;
+  --sidebar-hover:  #c8d8eb;
+  --sidebar-text:   100 148 196; /* muted navy-blue */
+}
+
+/* Midnight — near-black with blue undertone */
+[data-sidebar="midnight"] {
+  --hero:           #080c14;
+  --hero-mid:       #10151f;
+  --hero-light:     #181e2e;
+  --sidebar:        #080c14;
+  --sidebar-active: #181e2e;
+  --sidebar-hover:  #d0d4e0;
+  --sidebar-text:   140 148 176; /* cool slate */
+}
+
+/* Slate — neutral warm-gray */
+[data-sidebar="slate"] {
+  --hero:           #151820;
+  --hero-mid:       #1c202c;
+  --hero-light:     #242838;
+  --sidebar:        #151820;
+  --sidebar-active: #242838;
+  --sidebar-hover:  #d4d6e0;
+  --sidebar-text:   144 148 172; /* muted slate */
+}
+
+/* Forest (default) — explicit so it can be selected in UI */
+[data-sidebar="forest"] {
+  --hero:           #0f2117;
+  --hero-mid:       #163020;
+  --hero-light:     #1d3e28;
+  --sidebar:        #0f2117;
+  --sidebar-active: #1d3e28;
+  --sidebar-hover:  #c8e8d0;
+  --sidebar-text:   122 171 138; /* muted green */
+}
+
 /* ── Base styles ──────────────────────────────────────────────────── */
 html {
   background: var(--bg);

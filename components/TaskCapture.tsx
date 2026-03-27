@@ -8,8 +8,15 @@ import { formatDueDate } from "../lib/datetime";
 type ParseStatus = "idle" | "parsing" | "preview" | "error";
 
 type TaskCaptureProps = {
-  // Called with the fully-formed task when the student confirms the parsed preview
-  onTaskAdded: (task: StudentTask) => void;
+  onTaskAdded: (task: {
+    title: string;
+    description?: string;
+    classId?: string;
+    dueAt?: string;
+    type?: StudentTask["type"];
+    reminderAt?: string;
+    source?: StudentTask["source"];
+  }) => Promise<unknown>;
 };
 
 export function TaskCapture({ onTaskAdded }: TaskCaptureProps) {
@@ -49,28 +56,26 @@ export function TaskCapture({ onTaskAdded }: TaskCaptureProps) {
     }
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!preview) return;
 
-    const now = new Date().toISOString();
-    const task: StudentTask = {
-      id: crypto.randomUUID(),
-      title: preview.title ?? input,
-      description: preview.description,
-      classId: preview.classId,
-      dueAt: preview.dueAt,
-      type: preview.type,
-      reminderAt: preview.reminderAt,
-      status: "todo",
-      source: "ai-parsed",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    onTaskAdded(task);
-    setInput("");
-    setPreview(null);
-    setStatus("idle");
+    try {
+      await onTaskAdded({
+        title: preview.title ?? input,
+        description: preview.description,
+        classId: preview.classId,
+        dueAt: preview.dueAt,
+        type: preview.type,
+        reminderAt: preview.reminderAt,
+        source: "ai-parsed",
+      });
+      setInput("");
+      setPreview(null);
+      setStatus("idle");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "Failed to save task.");
+      setStatus("error");
+    }
   };
 
   const handleCancel = () => {
@@ -193,7 +198,7 @@ export function TaskCapture({ onTaskAdded }: TaskCaptureProps) {
           <div className="flex flex-wrap gap-3 pt-1">
             <button
               type="button"
-              onClick={handleConfirm}
+              onClick={() => void handleConfirm()}
               className="rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
             >
               Add this task

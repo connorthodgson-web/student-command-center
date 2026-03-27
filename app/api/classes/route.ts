@@ -3,8 +3,9 @@ import {
   mapDbClassToSchoolClass,
   mapSchoolClassToInsert,
   mapSchoolClassToUpdate,
+  normalizeSchoolClassInput,
 } from "../../../lib/classes";
-import { createClient } from "../../../lib/supabase/server";
+import { getAuthedSupabase } from "../../../lib/supabase/route-auth";
 import type { SchoolClass } from "../../../types";
 
 type CreateClassesRequest = {
@@ -50,17 +51,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "At least one class is required." }, { status: 400 });
   }
 
-  const rows = classes.map((schoolClass) => mapSchoolClassToInsert(schoolClass, userId));
-  const { data, error } = await supabase.from("classes").insert(rows).select("*");
+  try {
+    const rows = classes.map((schoolClass) =>
+      mapSchoolClassToInsert(normalizeSchoolClassInput(schoolClass, { requireName: true }), userId),
+    );
+    const { data, error } = await supabase.from("classes").insert(rows).select("*");
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json(
+      { data: (data ?? []).map(mapDbClassToSchoolClass) },
+      { status: 201 }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid class payload.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
-
-  return NextResponse.json(
-    { data: (data ?? []).map(mapDbClassToSchoolClass) },
-    { status: 201 }
-  );
 }
 
 export async function PATCH(request: Request) {
@@ -78,19 +86,24 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Class updates are required." }, { status: 400 });
   }
 
-  const { data, error } = await supabase
-    .from("classes")
-    .update(mapSchoolClassToUpdate(body.updates))
-    .eq("id", body.id)
-    .eq("user_id", userId)
-    .select("*")
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from("classes")
+      .update(mapSchoolClassToUpdate(normalizeSchoolClassInput(body.updates)))
+      .eq("id", body.id)
+      .eq("user_id", userId)
+      .select("*")
+      .single();
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ data: mapDbClassToSchoolClass(data) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid class updates.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
-
-  return NextResponse.json({ data: mapDbClassToSchoolClass(data) });
 }
 
 export async function DELETE(request: Request) {
@@ -115,30 +128,4 @@ export async function DELETE(request: Request) {
   }
 
   return NextResponse.json({ success: true });
-}
-
-async function getAuthedSupabase() {
-  const supabase = await createClient();
-
-  if (!supabase) {
-    return {
-      response: NextResponse.json(
-        { error: "Supabase is not configured." },
-        { status: 503 }
-      ),
-    };
-  }
-
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) {
-    return {
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
-  }
-
-  return { supabase, userId: user.id };
 }

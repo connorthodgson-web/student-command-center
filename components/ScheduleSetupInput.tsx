@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { SchoolClass, Weekday } from "../types";
+import { deriveScheduleLabel, getRotationSelectionValue, rotationSelectionToDays } from "../lib/class-rotation";
 
 const WEEKDAYS: { label: string; value: Weekday }[] = [
   { label: "Mon", value: "monday" },
@@ -51,11 +52,12 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
           classes: existingClasses,
           reminderPreferences: {
             id: "",
+            deliveryChannel: "in_app",
             dailySummaryEnabled: false,
             tonightSummaryEnabled: false,
             dueSoonRemindersEnabled: false,
           },
-          todayDayType: null,
+          effectiveDayType: null,
         }),
       });
 
@@ -187,7 +189,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
           {" "}review and edit
         </p>
         <p className="mt-0.5 text-xs text-muted">
-          Make any corrections before saving. Click days or rotation to toggle them.
+          Make any corrections before saving. Use rotation to mark A-day, B-day, or both.
         </p>
       </div>
 
@@ -257,22 +259,30 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
 
             <div className="flex items-center gap-2 text-xs text-muted">
               <span className="w-14 shrink-0">Rotation</span>
-              {(["A", "B", null] as const).map((label) => (
+              {(["", "A", "B", "AB"] as const).map((value) => (
                 <button
-                  key={String(label)}
+                  key={value || "none"}
                   type="button"
-                  onClick={() => updateClass(i, { scheduleLabel: label ?? undefined })}
+                  onClick={() => {
+                    const rotationDays = rotationSelectionToDays(value);
+                    updateClass(i, {
+                      rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
+                      scheduleLabel: deriveScheduleLabel(rotationDays),
+                    });
+                  }}
                   className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
-                    cls.scheduleLabel === (label ?? undefined)
-                      ? label === "A"
+                    getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel) === value
+                      ? value === "A"
                         ? "border border-accent-blue-foreground/30 bg-accent-blue text-accent-blue-foreground"
-                        : label === "B"
+                      : value === "B"
                           ? "border border-accent-purple-foreground/30 bg-accent-purple text-accent-purple-foreground"
+                          : value === "AB"
+                            ? "border border-accent-green-foreground/30 bg-accent-green text-accent-green-foreground"
                           : "border border-border bg-card text-foreground"
                       : "border border-border text-muted hover:bg-card hover:text-foreground"
                   }`}
                 >
-                  {label === null ? "None" : `${label}-Day`}
+                  {value === "" ? "None" : value === "AB" ? "A+B" : `${value}-Day`}
                 </button>
               ))}
             </div>

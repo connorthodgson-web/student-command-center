@@ -26,6 +26,7 @@ export const mockClasses: SchoolClass[] = [
     ],
     room: "Lab 3",
     color: "#d4e6f7",
+    rotationDays: ["B"],
     scheduleLabel: "B", // Biology only meets on B-rotation days at this school
   },
   {
@@ -37,6 +38,7 @@ export const mockClasses: SchoolClass[] = [
     endTime: "14:15",
     room: "Room 118",
     color: "#fdefd3",
+    rotationDays: ["A"],
     scheduleLabel: "A", // History meets on A-rotation days
   },
 ];
@@ -103,6 +105,7 @@ export const mockTasks: StudentTask[] = [
 
 export const mockReminderPreference: ReminderPreference = {
   id: "reminder-pref-1",
+  deliveryChannel: "in_app",
   dailySummaryEnabled: true,
   dailySummaryTime: "07:00",
   tonightSummaryEnabled: true,

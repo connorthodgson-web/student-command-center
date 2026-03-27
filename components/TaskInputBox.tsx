@@ -4,71 +4,92 @@ import { useState } from "react";
 import type { StudentTask } from "../types";
 
 type TaskInputBoxProps = {
-  onSubmitTask?: (value: string) => void;
-  // Called with a fully-structured task when the student confirms a capture.
-  onTaskConfirmed?: (task: StudentTask) => void;
+  onTaskAdded?: (task: StudentTask) => void;
 };
 
-export function TaskInputBox({ onSubmitTask, onTaskConfirmed }: TaskInputBoxProps) {
+// TODO: Replace with Supabase-backed task persistence once auth is set up
+export function TaskInputBox({ onTaskAdded }: TaskInputBoxProps) {
   const [value, setValue] = useState("");
-  const [lastSubmitted, setLastSubmitted] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "adding" | "success" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = value.trim();
+    if (!trimmed || status === "adding") return;
 
-    const trimmedValue = value.trim();
+    setStatus("adding");
+    setError(null);
 
-    if (!trimmedValue) {
-      return;
-    }
+    try {
+      const res = await fetch("/api/ai/parse-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: trimmed }),
+      });
 
-    onSubmitTask?.(trimmedValue);
+      const json = (await res.json()) as { data?: Partial<StudentTask>; error?: string };
 
-    if (onTaskConfirmed) {
+      if (!res.ok) {
+        throw new Error(json.error ?? "Something went wrong. Try again.");
+      }
+
+      const partial = json.data ?? {};
       const now = new Date().toISOString();
-      onTaskConfirmed({
+      const task: StudentTask = {
         id: crypto.randomUUID(),
-        title: trimmedValue,
+        title: partial.title ?? trimmed,
+        description: partial.description,
+        classId: partial.classId,
+        dueAt: partial.dueAt,
+        type: partial.type,
+        reminderAt: partial.reminderAt,
         status: "todo",
-        source: "manual",
+        source: "ai-parsed",
         createdAt: now,
         updatedAt: now,
-      });
-    }
+      };
 
-    setLastSubmitted(trimmedValue);
-    setValue("");
+      onTaskAdded?.(task);
+      setValue("");
+      setStatus("success");
+      setTimeout(() => setStatus("idle"), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong. Try again.");
+      setStatus("error");
+    }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <label className="block">
-        <span className="mb-2 block text-sm font-medium text-foreground">
-          Tell the assistant what you need to do
-        </span>
-        <textarea
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          placeholder="I have a Great Gatsby essay due March 11 at 11:59 PM."
-          className="min-h-28 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm text-foreground outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-        />
-      </label>
-
-      <p className="text-sm leading-6 text-slate-600">
-        Examples: &quot;Bio test next Friday.&quot; &quot;Math worksheet due tomorrow.&quot; &quot;Remind me to study chemistry tonight.&quot;
-      </p>
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="e.g. Bio test next Friday, History essay due tomorrow at 11pm"
+        rows={2}
+        disabled={status === "adding"}
+        className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/30 disabled:opacity-50"
+      />
 
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
-          className="rounded-full bg-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+          disabled={status === "adding" || !value.trim()}
+          className="rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
         >
-          Capture task
+          {status === "adding" ? "Adding..." : "Add task"}
         </button>
-        {lastSubmitted ? (
-          <span className="text-sm text-slate-600">Last captured: &quot;{lastSubmitted}&quot;</span>
-        ) : null}
+
+        {status === "success" && (
+          <span className="text-sm font-medium text-accent-green-foreground">Task added!</span>
+        )}
       </div>
+
+      {status === "error" && error && (
+        <p className="rounded-xl border border-accent-rose/40 bg-accent-rose/10 px-4 py-2.5 text-sm text-accent-rose-foreground">
+          {error}
+        </p>
+      )}
     </form>
   );
 }

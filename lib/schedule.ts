@@ -1,5 +1,6 @@
 // UI redesign pass
 import type { ClassMeetingTime, SchoolCalendarEntry, SchoolClass, Weekday } from "../types";
+import { classHasRotationDay, getClassRotationDays } from "./class-rotation";
 
 const weekdayLabels: Record<Weekday, string> = {
   monday: "Mon",
@@ -114,10 +115,10 @@ export function classMeetsOnDay(schoolClass: SchoolClass, day: Weekday): boolean
  * Returns classes that meet on a given weekday with A/B day awareness.
  *
  * Logic:
- * - Standard classes (no scheduleLabel): shown when their weekday matches.
- * - A/B classes with specific days: shown when scheduleLabel AND weekday both match.
- * - A/B classes with no specific days (pure rotation): shown when dayType matches their label.
- * - If dayType is null and a class has scheduleLabel but no days: hidden (day type unknown).
+ * - Standard classes (no rotationDays): shown when their weekday matches.
+ * - Rotation classes with specific days: shown when rotation and weekday both match.
+ * - Rotation classes with no specific days: shown when dayType matches.
+ * - If dayType is null and a class has rotationDays but no weekdays: hidden.
  *
  * Use this on the dashboard instead of getClassesOnDay when A/B rotation is in play.
  */
@@ -131,14 +132,15 @@ export function getClassesForToday(
       const effectiveDays = getEffectiveDays(c);
       const hasSpecificDays = effectiveDays.length > 0;
 
-      if (c.scheduleLabel) {
-        if (dayType && c.scheduleLabel !== dayType) return false; // Wrong rotation
+      const rotationDays = getClassRotationDays(c);
+
+      if (rotationDays.length > 0) {
+        if (!dayType) return false;
+        if (!classHasRotationDay(c, dayType)) return false;
         if (hasSpecificDays) return effectiveDays.includes(day);
-        // Pure A/B class — show if we know the day type, hide otherwise
-        return dayType !== null;
+        return true;
       }
 
-      // Standard class — just weekday matching
       return hasSpecificDays && effectiveDays.includes(day);
     })
     .sort((a, b) => {

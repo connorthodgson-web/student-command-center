@@ -1,15 +1,26 @@
 "use client";
 
+import { useState } from "react";
 import { buildReminderPreferenceSummary } from "../lib/reminders";
 import { useReminderStore } from "../lib/reminder-store";
 
 export function ReminderSettingsCard() {
   const { preferences, updatePreferences } = useReminderStore();
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
 
   const togglePreference = (
     key: "dailySummaryEnabled" | "tonightSummaryEnabled" | "dueSoonRemindersEnabled",
   ) => {
-    updatePreferences({ [key]: !preferences[key] });
+    setError(null);
+    void updatePreferences({ [key]: !preferences[key] })
+      .then(() => {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      })
+      .catch((saveError) => {
+        setError(saveError instanceof Error ? saveError.message : "Failed to save preferences.");
+      });
   };
 
   return (
@@ -78,6 +89,18 @@ export function ReminderSettingsCard() {
           {buildReminderPreferenceSummary(preferences)}
         </p>
       </div>
+
+      {saved && (
+        <p className="mt-3 text-xs font-medium text-accent-green-foreground">
+          Saved
+        </p>
+      )}
+
+      {error && (
+        <p className="mt-4 rounded-xl border border-accent-rose bg-accent-rose px-4 py-3 text-sm text-accent-rose-foreground">
+          {error}
+        </p>
+      )}
     </section>
   );
 }

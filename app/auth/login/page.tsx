@@ -251,27 +251,6 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
             </button>
           </p>
 
-          {supabaseReady && (
-            <div className="mt-6 rounded-xl border border-dashed border-border bg-card/50 px-4 py-4">
-              <p className="mb-1 text-center text-xs font-semibold uppercase tracking-wide text-muted/60">
-                Test Mode
-              </p>
-              <p className="mb-3 text-center text-xs text-muted/60">
-                Shared test account for quick local and demo sign-in.
-              </p>
-              <button
-                type="button"
-                onClick={handleTestLogin}
-                disabled={testLoading}
-                className="w-full rounded-xl border border-border bg-background py-2.5 text-sm font-medium text-foreground transition hover:bg-card disabled:opacity-60"
-              >
-                {testLoading ? "Signing in..." : "Continue as test student"}
-              </button>
-              <p className="mt-2 text-center text-xs text-muted/50">
-                Uses the shared test account with no inbox setup required.
-              </p>
-            </div>
-          )}
         </div>
       </div>
     </div>

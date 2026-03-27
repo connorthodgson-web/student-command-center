@@ -5,7 +5,13 @@ import type { StudentTask, TaskType } from "../types";
 import { useClasses } from "../lib/stores/classStore";
 
 type ManualTaskFormProps = {
-  onTaskAdded: (task: StudentTask) => void;
+  onTaskAdded: (task: {
+    title: string;
+    classId?: string;
+    dueAt?: string;
+    type?: TaskType;
+    source?: StudentTask["source"];
+  }) => Promise<unknown>;
 };
 
 const TASK_TYPES: { value: TaskType; label: string }[] = [
@@ -23,34 +29,33 @@ export function ManualTaskForm({ onTaskAdded }: ManualTaskFormProps) {
   const [classId, setClassId] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [type, setType] = useState<TaskType | "">("");
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = title.trim();
     if (!trimmed) return;
 
-    const now = new Date().toISOString();
-    const task: StudentTask = {
-      id: crypto.randomUUID(),
-      title: trimmed,
-      classId: classId || undefined,
-      dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
-      type: type || undefined,
-      status: "todo",
-      source: "manual",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    onTaskAdded(task);
-    setTitle("");
-    setClassId("");
-    setDueAt("");
-    setType("");
+    setError(null);
+    try {
+      await onTaskAdded({
+        title: trimmed,
+        classId: classId || undefined,
+        dueAt: dueAt ? new Date(dueAt).toISOString() : undefined,
+        type: type || undefined,
+        source: "manual",
+      });
+      setTitle("");
+      setClassId("");
+      setDueAt("");
+      setType("");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save task.");
+    }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
       {/* Title */}
       <div>
         <label className="block text-sm font-medium text-foreground mb-1.5">
@@ -120,6 +125,12 @@ export function ManualTaskForm({ onTaskAdded }: ManualTaskFormProps) {
       >
         Add task
       </button>
+
+      {error && (
+        <p className="rounded-xl border border-accent-rose bg-accent-rose px-4 py-3 text-sm text-accent-rose-foreground">
+          {error}
+        </p>
+      )}
     </form>
   );
 }

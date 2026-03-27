@@ -1,22 +1,109 @@
 // UI redesign pass
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { SectionHeader } from "../../components/SectionHeader";
-import { TaskCapture } from "../../components/TaskCapture";
+import { TaskInputBox } from "../../components/TaskInputBox";
 import { ManualTaskForm } from "../../components/ManualTaskForm";
 import { TaskCard } from "../../components/TaskCard";
-import { useClasses } from "../../lib/stores/classStore";
-import { useTaskStore } from "../../lib/task-store";
 import { sortTasksByDueDate } from "../../lib/tasks";
+import type { SchoolClass, StudentTask } from "../../types";
 
 type ViewMode = "timeline" | "by-class";
 type AddMode = "smart" | "manual";
 
 export default function TasksPage() {
-  const { classes } = useClasses();
-  const { tasks, removingIds, addTask, completeTask, deleteTask } = useTaskStore();
+  const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const [tasks, setTasks] = useState<StudentTask[]>([]);
+  const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
+  const loading = false;
   const [viewMode, setViewMode] = useState<ViewMode>("timeline");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("scc-onboarding");
+      if (raw) {
+        const data = JSON.parse(raw) as { classes?: SchoolClass[] };
+        if (Array.isArray(data.classes)) setClasses(data.classes);
+      }
+    } catch {}
+    try {
+      const raw = localStorage.getItem("scc-tasks");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setTasks(parsed as StudentTask[]);
+      }
+    } catch {}
+  }, []);
+
+  const saveTasks = useCallback((updated: StudentTask[]) => {
+    try {
+      localStorage.setItem("scc-tasks", JSON.stringify(updated));
+    } catch {}
+  }, []);
+
+  const addTask = useCallback(
+    async (partial: {
+      title: string;
+      description?: string;
+      classId?: string;
+      dueAt?: string;
+      type?: StudentTask["type"];
+      reminderAt?: string;
+      source?: StudentTask["source"];
+      status?: StudentTask["status"];
+    }): Promise<StudentTask> => {
+      const now = new Date().toISOString();
+      const task: StudentTask = {
+        id: crypto.randomUUID(),
+        status: partial.status ?? "todo",
+        source: partial.source ?? "manual",
+        createdAt: now,
+        updatedAt: now,
+        ...partial,
+      };
+      setTasks((prev) => {
+        const updated = [...prev, task];
+        saveTasks(updated);
+        return updated;
+      });
+      return task;
+    },
+    [saveTasks],
+  );
+
+  const completeTask = useCallback(
+    (id: string) => {
+      setTasks((prev) => {
+        const updated = prev.map((t) =>
+          t.id === id ? { ...t, status: "done" as const } : t,
+        );
+        saveTasks(updated);
+        return updated;
+      });
+    },
+    [saveTasks],
+  );
+
+  const deleteTask = useCallback(
+    (id: string) => {
+      setRemovingIds((prev) => new Set([...prev, id]));
+      setTimeout(() => {
+        setTasks((prev) => {
+          const updated = prev.filter((t) => t.id !== id);
+          saveTasks(updated);
+          return updated;
+        });
+        setRemovingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 500);
+    },
+    [saveTasks],
+  );
   const [addMode, setAddMode] = useState<AddMode>("smart");
   const [showCompleted, setShowCompleted] = useState(false);
 
@@ -43,29 +130,38 @@ export default function TasksPage() {
         title="Tasks"
         description="Capture school work naturally, then review it here."
         action={
-          <div className="flex rounded-xl border border-border bg-surface p-0.5">
-            <button
-              type="button"
-              onClick={() => setViewMode("timeline")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                viewMode === "timeline"
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted hover:text-foreground"
-              }`}
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/chat?q=${encodeURIComponent("What should I work on today? Walk me through my tasks and help me prioritize.")}`}
+              className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted transition hover:border-sidebar-accent/40 hover:bg-sidebar-accent/5 hover:text-foreground"
             >
-              Timeline
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("by-class")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                viewMode === "by-class"
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              By Class
-            </button>
+              <span className="text-[10px] text-sidebar-accent">✦</span>
+              Ask assistant
+            </Link>
+            <div className="flex rounded-xl border border-border bg-surface p-0.5">
+              <button
+                type="button"
+                onClick={() => setViewMode("timeline")}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  viewMode === "timeline"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                Timeline
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("by-class")}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  viewMode === "by-class"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                By Class
+              </button>
+            </div>
           </div>
         }
       />
@@ -109,7 +205,7 @@ export default function TasksPage() {
         </div>
         <div className="mt-4">
           {addMode === "smart" ? (
-            <TaskCapture onTaskAdded={addTask} />
+            <TaskInputBox onTaskAdded={addTask} />
           ) : (
             <ManualTaskForm onTaskAdded={addTask} />
           )}
@@ -134,14 +230,19 @@ export default function TasksPage() {
         </div>
 
         <div className="mt-4">
-          {sortedTasks.length === 0 ? (
+          {loading ? (
+            <div className="rounded-xl border border-dashed border-border px-5 py-8 text-center">
+              <div className="mx-auto mb-3 h-5 w-5 animate-spin rounded-full border-2 border-border border-t-sidebar-accent" />
+              <p className="text-sm text-muted">Loading your tasks…</p>
+            </div>
+          ) : sortedTasks.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-5 py-8 text-center">
               <p className="text-sm font-medium text-foreground">
-                {tasks.length === 0 ? "No tasks yet." : "All caught up!"}
+                {tasks.length === 0 ? "Nothing here yet." : "All caught up!"}
               </p>
               <p className="mt-1 text-xs text-muted">
                 {tasks.length === 0
-                  ? "Add your first task above — try \"Bio test Friday\" or \"Essay due tomorrow\"."
+                  ? "Tell the assistant what you have to do above and it will show up here."
                   : "No open tasks right now. Add a new one above when you're ready."}
               </p>
             </div>
@@ -179,6 +280,15 @@ export default function TasksPage() {
                       <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-muted">
                         {groupTasks.length}
                       </span>
+                      {classId && (
+                        <Link
+                          href={`/chat?q=${encodeURIComponent(`Help me plan how to tackle my ${label} tasks. What should I prioritize?`)}`}
+                          className="ml-auto flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[10px] font-medium text-muted transition hover:border-sidebar-accent/40 hover:text-foreground"
+                        >
+                          <span className="text-[9px] text-sidebar-accent">✦</span>
+                          Ask
+                        </Link>
+                      )}
                     </div>
                     <div className="space-y-2">
                       {groupTasks.map((task) => (

@@ -27,5 +27,11 @@ export function buildReminderPreferenceSummary(preferences: ReminderPreference) 
       : "Due-soon reminders are off.",
   );
 
+  parts.push(
+    preferences.deliveryChannel === "sms"
+      ? "Reminder delivery is set to SMS when a verified texting number is available."
+      : "Reminder delivery is set to in-app.",
+  );
+
   return parts.join(" ");
 }

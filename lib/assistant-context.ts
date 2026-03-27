@@ -131,6 +131,7 @@ function timeToMinutes(t: string): number {
 
 export function formatTodayContextForPrompt(ctx: TodayContext): string {
   const lines: string[] = [];
+  const now = new Date(`${ctx.date}T${new Date().toTimeString().slice(0, 8)}`);
 
   lines.push(`## Today's context`);
   const dayLabel = ctx.dayType ? ` (${ctx.dayType}-Day)` : "";
@@ -139,7 +140,7 @@ export function formatTodayContextForPrompt(ctx: TodayContext): string {
 
   if (!ctx.isNoSchool && ctx.todayClasses.length > 0) {
     // Determine current and next class based on current wall-clock time
-    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
     let currentClass: TodayContextClass | null = null;
     let nextClass: TodayContextClass | null = null;
 

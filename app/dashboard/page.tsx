@@ -1,15 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AssistantInput } from "../../components/AssistantInput";
 import { NextTaskCard } from "../../components/NextTaskCard";
 import { TaskCard } from "../../components/TaskCard";
-import { useClasses } from "../../lib/stores/classStore";
+import { TaskInputBox } from "../../components/TaskInputBox";
 import { useScheduleConfig } from "../../lib/stores/scheduleConfig";
 import { useCalendar } from "../../lib/stores/calendarStore";
 import { useReminderStore } from "../../lib/reminder-store";
-import { useTaskStore } from "../../lib/task-store";
 import {
   getClassesForToday,
   getCurrentWeekday,
@@ -19,13 +18,14 @@ import {
   isNoSchoolDay,
   getAbOverrideForDate,
 } from "../../lib/schedule";
+import { getClassRotationDays } from "../../lib/class-rotation";
 import {
   getIncompleteTasks,
   groupTasksByDisplayBucket,
   sortTasksByDueDate,
 } from "../../lib/tasks";
 import type { TaskDisplayBuckets } from "../../lib/tasks";
-import type { SchoolClass, SchoolDayCategory, Weekday } from "../../types";
+import type { SchoolClass, SchoolDayCategory, StudentTask, Weekday } from "../../types";
 import { TodayFocusCard } from "../../components/TodayFocusCard";
 
 const BUCKET_LABELS: Record<keyof TaskDisplayBuckets, string> = {
@@ -231,9 +231,119 @@ function TodaySchedule({
 }
 
 export default function DashboardPage() {
-  const { classes, addClasses } = useClasses();
-  const { tasks, removingIds, addTask, completeTask, deleteTask } = useTaskStore();
+  const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const [tasks, setTasks] = useState<StudentTask[]>([]);
+  const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
+  const tasksLoading = false;
   const { preferences: reminderPreferences } = useReminderStore();
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("scc-onboarding");
+      if (raw) {
+        const data = JSON.parse(raw) as { classes?: SchoolClass[] };
+        if (Array.isArray(data.classes)) setClasses(data.classes);
+      }
+    } catch {}
+    try {
+      const raw = localStorage.getItem("scc-tasks");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setTasks(parsed as StudentTask[]);
+      }
+    } catch {}
+  }, []);
+
+  const saveClasses = useCallback((updated: SchoolClass[]) => {
+    try {
+      const raw = localStorage.getItem("scc-onboarding");
+      const data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      localStorage.setItem("scc-onboarding", JSON.stringify({ ...data, classes: updated }));
+    } catch {}
+  }, []);
+
+  const saveTasks = useCallback((updated: StudentTask[]) => {
+    try {
+      localStorage.setItem("scc-tasks", JSON.stringify(updated));
+    } catch {}
+  }, []);
+
+  const addClasses = useCallback(
+    (newClasses: Array<Omit<SchoolClass, "id">>) => {
+      setClasses((prev) => {
+        const withIds: SchoolClass[] = newClasses.map((c) => ({
+          ...c,
+          id: crypto.randomUUID(),
+        }));
+        const updated = [...prev, ...withIds];
+        saveClasses(updated);
+        return updated;
+      });
+    },
+    [saveClasses],
+  );
+
+  const addTask = useCallback(
+    async (partial: {
+      title: string;
+      description?: string;
+      classId?: string;
+      dueAt?: string;
+      type?: StudentTask["type"];
+      reminderAt?: string;
+      source?: StudentTask["source"];
+      status?: StudentTask["status"];
+    }): Promise<StudentTask> => {
+      const now = new Date().toISOString();
+      const task: StudentTask = {
+        id: crypto.randomUUID(),
+        status: partial.status ?? "todo",
+        source: partial.source ?? "manual",
+        createdAt: now,
+        updatedAt: now,
+        ...partial,
+      };
+      setTasks((prev) => {
+        const updated = [...prev, task];
+        saveTasks(updated);
+        return updated;
+      });
+      return task;
+    },
+    [saveTasks],
+  );
+
+  const completeTask = useCallback(
+    (id: string) => {
+      setTasks((prev) => {
+        const updated = prev.map((t) =>
+          t.id === id ? { ...t, status: "done" as const } : t,
+        );
+        saveTasks(updated);
+        return updated;
+      });
+    },
+    [saveTasks],
+  );
+
+  const deleteTask = useCallback(
+    (id: string) => {
+      setRemovingIds((prev) => new Set([...prev, id]));
+      setTimeout(() => {
+        setTasks((prev) => {
+          const updated = prev.filter((t) => t.id !== id);
+          saveTasks(updated);
+          return updated;
+        });
+        setRemovingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 500);
+    },
+    [saveTasks],
+  );
   const { todayDayType, setTodayDayType } = useScheduleConfig();
   const { entries: calendarEntries, getEntryForDate } = useCalendar();
 
@@ -254,7 +364,7 @@ export default function DashboardPage() {
     : getClassesForToday(classes, todayWeekday, effectiveDayType);
 
   // Whether any class uses A/B rotation (shows the day-type picker if so)
-  const hasAbClasses = classes.some((c) => c.scheduleLabel);
+  const hasAbClasses = classes.some((c) => getClassRotationDays(c).length > 0);
 
   const incompleteTasks = sortTasksByDueDate(getIncompleteTasks(tasks));
   const groupedTasks = groupTasksByDisplayBucket(incompleteTasks);
@@ -284,7 +394,7 @@ export default function DashboardPage() {
   return (
     <main className="flex min-h-screen flex-col">
       {/* ── Dark hero: greeting + assistant input ─────────────────── */}
-      <div className="relative bg-hero px-8 py-10 md:py-14">
+      <div className="relative bg-hero px-6 py-8 md:px-8 md:py-14">
         {/* Subtle radial glow for depth */}
         <div
           className="pointer-events-none absolute inset-0 opacity-30"
@@ -297,20 +407,40 @@ export default function DashboardPage() {
         <div className="relative mx-auto max-w-6xl">
           {/* Date + greeting row */}
           <div className="flex items-center gap-2 text-[13px]">
-            <span className="font-medium text-sidebar-text">{greeting}</span>
-            <span className="text-white/20">·</span>
             <span className="text-white/40">{formatTodayLong()}</span>
           </div>
 
-          <h1 className="mt-2 text-[2.4rem] font-bold tracking-tight text-white leading-[1.15]">
-            What&apos;s on your mind?
-          </h1>
-          <p className="mt-1.5 text-sm text-white/40">
-            Add a task, set up your schedule, or type anything — your assistant handles it.
-          </p>
+          <div className="mt-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-[2rem] font-bold tracking-tight text-white leading-[1.15]">
+                {greeting}
+              </h1>
+              <p className="mt-1 text-sm text-white/40">
+                Your assistant is ready — add a task, ask about your workload, or start a tutoring session.
+              </p>
+            </div>
+
+            {/* Primary assistant CTA */}
+            <div className="mt-4 flex shrink-0 gap-2 sm:mt-0">
+              <Link
+                href="/chat"
+                className="flex items-center gap-2 rounded-xl bg-sidebar-accent/15 px-4 py-2 text-sm font-semibold text-sidebar-accent ring-1 ring-sidebar-accent/30 transition hover:bg-sidebar-accent/25"
+              >
+                <span className="text-[11px]">✦</span>
+                Open Assistant
+              </Link>
+              <Link
+                href="/chat?tutor=true"
+                className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/60 transition hover:bg-white/10 hover:text-white"
+              >
+                <span>🎓</span>
+                Start Tutoring
+              </Link>
+            </div>
+          </div>
 
           {/* Status chips */}
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-5 flex flex-wrap gap-2">
             {tasksWithDates > 0 && (
               <span className="inline-flex items-center rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-300/90">
                 {tasksWithDates} task{tasksWithDates !== 1 ? "s" : ""} with due dates
@@ -326,15 +456,18 @@ export default function DashboardPage() {
                 {overdueCount} overdue
               </span>
             )}
-            {incompleteTasks.length === 0 && (
+            {!tasksLoading && incompleteTasks.length === 0 && (
               <span className="inline-flex items-center rounded-full border border-sidebar-accent/20 bg-sidebar-accent/8 px-3 py-1 text-xs font-medium text-sidebar-accent">
                 All clear — no open tasks
               </span>
             )}
           </div>
 
-          {/* Assistant input */}
-          <div className="mt-6 max-w-3xl">
+          {/* Quick-ask input — for fast task / schedule entry */}
+          <div className="mt-5 max-w-3xl">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+              Quick capture
+            </p>
             <AssistantInput
               tasks={tasks}
               classes={classes}
@@ -343,21 +476,78 @@ export default function DashboardPage() {
               onSchedulesConfirmed={addClasses}
               placeholder={assistantPlaceholder}
             />
-            <div className="mt-3 flex items-center gap-1.5">
-              <span className="text-[11px] text-white/25">Want a full conversation?</span>
-              <Link
-                href="/chat"
-                className="text-[11px] text-sidebar-accent/60 transition-colors hover:text-sidebar-accent"
-              >
-                Open the assistant →
-              </Link>
-            </div>
           </div>
         </div>
       </div>
 
       {/* ── Light content area ─────────────────────────────────── */}
-      <div className="mx-auto w-full max-w-6xl flex-1 space-y-8 px-8 py-8">
+      <div className="mx-auto w-full max-w-6xl flex-1 space-y-8 px-6 py-8 md:px-8">
+
+        {/* ── First-time user welcome ──────────────────────────────
+            Shown on cold start: no classes, no tasks, not loading.
+            Gives a student clear next actions within 5 seconds.  */}
+        {classes.length === 0 && !tasksLoading && incompleteTasks.length === 0 && (
+          <section className="rounded-2xl border border-sidebar-accent/25 bg-gradient-to-br from-sidebar-accent/8 to-transparent p-6 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-accent/20 text-[13px] text-sidebar-accent">
+                ✦
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-foreground">
+                  Get set up in 60 seconds
+                </h2>
+                <p className="mt-0.5 text-sm text-muted">
+                  Your assistant is ready. Here are three ways to get started.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              {/* Step 1: Add schedule via the quick-input above */}
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="mb-2 text-xl">📚</div>
+                <p className="text-sm font-semibold text-foreground">Add your schedule</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  Type it in the box above — "Math Mon/Wed 9am with Mr. Chen" — and your assistant parses it instantly.
+                </p>
+              </div>
+
+              {/* Step 2: Go add a task */}
+              <Link
+                href="/tasks"
+                className="group rounded-xl border border-border bg-card p-4 transition hover:border-sidebar-accent/30 hover:bg-sidebar-accent/5"
+              >
+                <div className="mb-2 text-xl">✅</div>
+                <p className="text-sm font-semibold text-foreground transition-colors group-hover:text-sidebar-accent">
+                  Log your first task
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  Try "English essay due Friday" or "Bio test next Tuesday."
+                </p>
+              </Link>
+
+              {/* Step 3: Open the assistant */}
+              <Link
+                href="/chat"
+                className="group rounded-xl border border-sidebar-accent/20 bg-sidebar-accent/5 p-4 transition hover:bg-sidebar-accent/10"
+              >
+                <div className="mb-2 text-xl">💬</div>
+                <p className="text-sm font-semibold text-sidebar-accent">Ask your assistant</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  Make study plans, get quizzed, or ask what to work on tonight.
+                </p>
+              </Link>
+            </div>
+
+            {/* Example prompt — makes the input feel approachable */}
+            <div className="mt-4 flex flex-wrap items-start gap-2 rounded-xl border border-sidebar-accent/10 bg-sidebar-accent/5 px-4 py-3">
+              <span className="shrink-0 text-xs font-semibold text-muted">Try saying:</span>
+              <span className="text-xs italic text-foreground/70">
+                "AP Bio Mon/Wed/Fri 9–9:50, Calc Tues/Thurs 2–2:50, and I have a history essay due Friday."
+              </span>
+            </div>
+          </section>
+        )}
 
         {/* Special day banner — shown when today has a calendar entry */}
         {todayCalendarEntry && (
@@ -443,8 +633,8 @@ export default function DashboardPage() {
           />
         )}
 
-        {/* Empty state: no classes set up yet */}
-        {classes.length === 0 && (
+        {/* Empty state: has tasks but no classes — prompt to add schedule */}
+        {classes.length === 0 && incompleteTasks.length > 0 && (
           <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-7">
             <p className="text-sm font-medium text-foreground">No classes set up yet.</p>
             <p className="mt-1 text-sm text-muted">
@@ -488,8 +678,15 @@ export default function DashboardPage() {
           <section className="rounded-2xl border border-border bg-card p-6 shadow-card">
             <h2 className="text-base font-semibold text-foreground">Workload</h2>
             <div className="mt-4 space-y-3">
-              {nonEmptyBuckets.length === 0 ? (
-                <p className="text-sm text-muted">No open tasks right now.</p>
+              {tasksLoading ? (
+                <p className="text-sm text-muted">Loading your tasks...</p>
+              ) : nonEmptyBuckets.length === 0 ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted">
+                    No tasks yet. Use the box above to tell your assistant what you have to do.
+                  </p>
+                  <TaskInputBox onTaskAdded={addTask} />
+                </div>
               ) : (
                 nonEmptyBuckets.map(([bucket, bucketTasks]) => (
                   <div

@@ -1,61 +1,141 @@
 "use client";
 
-// TODO: Replace this in-memory store with Supabase-backed persistence once auth is wired up.
-
-import { createContext, useContext, useState } from "react";
-import { mockTasks } from "./mock-data";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useAuth } from "./auth-context";
 import type { StudentTask } from "../types";
+
+type TaskCreateInput = {
+  title: string;
+  description?: string;
+  classId?: string;
+  dueAt?: string;
+  type?: StudentTask["type"];
+  reminderAt?: string;
+  source?: StudentTask["source"];
+  status?: StudentTask["status"];
+};
+
+type TaskUpdateInput = Partial<TaskCreateInput>;
 
 type TaskStoreContextValue = {
   tasks: StudentTask[];
   removingIds: Set<string>;
-  addTask: (task: StudentTask) => void;
-  completeTask: (taskId: string) => void;
-  deleteTask: (taskId: string) => void;
+  loading: boolean;
+  addTask: (task: TaskCreateInput) => Promise<StudentTask>;
+  updateTask: (taskId: string, updates: TaskUpdateInput) => Promise<StudentTask>;
+  completeTask: (taskId: string) => Promise<void>;
+  deleteTask: (taskId: string) => Promise<void>;
 };
 
 const TaskStoreContext = createContext<TaskStoreContextValue | null>(null);
 
 export function TaskStoreProvider({ children }: { children: React.ReactNode }) {
-  const [tasks, setTasks] = useState<StudentTask[]>(mockTasks);
+  const { user, loading: authLoading } = useAuth();
+  const [tasks, setTasks] = useState<StudentTask[]>([]);
+  const [loading, setLoading] = useState(true);
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
 
-  const addTask = (task: StudentTask) => {
-    setTasks((prev) => [task, ...prev]);
-  };
+  const loadTasks = useCallback(async () => {
+    if (!user) {
+      setTasks([]);
+      setLoading(false);
+      return;
+    }
 
-  const completeTask = (taskId: string) => {
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === taskId
-          ? { ...t, status: "done" as const, updatedAt: new Date().toISOString() }
-          : t
-      )
-    );
-    // Start fade-out after a brief confirmation window
-    setTimeout(() => {
-      setRemovingIds((prev) => new Set([...prev, taskId]));
-    }, 1800);
-    // Remove from list after fade completes
-    setTimeout(() => {
-      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    setLoading(true);
+    try {
+      const response = await fetch("/api/tasks", { cache: "no-store" });
+      const json = (await response.json()) as { data?: StudentTask[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(json.error ?? "Failed to load tasks.");
+      }
+
+      setTasks(json.data ?? []);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    void loadTasks();
+  }, [authLoading, loadTasks]);
+
+  const addTask = useCallback(async (task: TaskCreateInput) => {
+    const response = await fetch("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task }),
+    });
+    const json = (await response.json()) as { data?: StudentTask; error?: string };
+
+    if (!response.ok || !json.data) {
+      throw new Error(json.error ?? "Failed to save task.");
+    }
+
+    setTasks((prev) => [json.data as StudentTask, ...prev]);
+    return json.data;
+  }, []);
+
+  const updateTask = useCallback(async (taskId: string, updates: TaskUpdateInput) => {
+    const response = await fetch("/api/tasks", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: taskId, updates }),
+    });
+    const json = (await response.json()) as { data?: StudentTask; error?: string };
+
+    if (!response.ok || !json.data) {
+      throw new Error(json.error ?? "Failed to update task.");
+    }
+
+    setTasks((prev) => prev.map((task) => (task.id === taskId ? json.data! : task)));
+    return json.data;
+  }, []);
+
+  const completeTask = useCallback(async (taskId: string) => {
+    const completedTask = await updateTask(taskId, { status: "done" });
+    setRemovingIds((prev) => new Set(prev).add(taskId));
+
+    window.setTimeout(() => {
+      setTasks((prev) => prev.filter((task) => task.id !== completedTask.id));
       setRemovingIds((prev) => {
         const next = new Set(prev);
         next.delete(taskId);
         return next;
       });
-    }, 2400);
-  };
+    }, 650);
+  }, [updateTask]);
 
-  const deleteTask = (taskId: string) => {
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
-  };
+  const deleteTask = useCallback(async (taskId: string) => {
+    const response = await fetch("/api/tasks", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: taskId }),
+    });
+    const json = (await response.json()) as { error?: string };
 
-  return (
-    <TaskStoreContext.Provider value={{ tasks, removingIds, addTask, completeTask, deleteTask }}>
-      {children}
-    </TaskStoreContext.Provider>
+    if (!response.ok) {
+      throw new Error(json.error ?? "Failed to delete task.");
+    }
+
+    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+  }, []);
+
+  const value = useMemo(
+    () => ({ tasks, removingIds, loading, addTask, updateTask, completeTask, deleteTask }),
+    [tasks, removingIds, loading, addTask, updateTask, completeTask, deleteTask],
   );
+
+  return <TaskStoreContext.Provider value={value}>{children}</TaskStoreContext.Provider>;
 }
 
 export function useTaskStore(): TaskStoreContextValue {

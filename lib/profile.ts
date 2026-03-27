@@ -1,10 +1,16 @@
 export type AssistantTone = "balanced" | "chill" | "focused";
+export type AiModel = "fast" | "balanced" | "powerful";
+export type MainGoal = "organized" | "study" | "both";
 
 export interface StudentProfile {
   displayName?: string;
   gradeLevel?: string;
   goals?: string;
+  mainGoal?: MainGoal;
+  focusClass?: string;
   assistantTone: AssistantTone;
+  aiModel?: AiModel;
+  onboardingComplete?: boolean;
 }
 
 const STORAGE_KEY = "scc_profile";
@@ -44,6 +50,19 @@ export function buildProfilePrompt(profile: StudentProfile | undefined): string 
 
   if (profile.goals) {
     lines.push(`Student's goals: ${profile.goals}`);
+  }
+
+  if (profile.mainGoal) {
+    const goalMap: Record<MainGoal, string> = {
+      organized: "Primary focus: staying organized and on top of deadlines.",
+      study: "Primary focus: studying more effectively and understanding material.",
+      both: "Primary focus: staying organized and studying more effectively.",
+    };
+    lines.push(goalMap[profile.mainGoal]);
+  }
+
+  if (profile.focusClass) {
+    lines.push(`The student's most important or challenging class right now is ${profile.focusClass}. Give extra care and detail when this class comes up.`);
   }
 
   const toneMap: Record<AssistantTone, string> = {

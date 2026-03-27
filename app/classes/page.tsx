@@ -1,15 +1,43 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { SectionHeader } from "../../components/SectionHeader";
-import { useClasses } from "../../lib/stores/classStore";
+import { ClassMaterialsPanel } from "../../components/ClassMaterialsPanel";
 import { formatTimeRange } from "../../lib/schedule";
 import { getApTemplate } from "../../lib/ap-course-templates";
+import {
+  formatRotationBadge,
+  getClassRotationDays,
+} from "../../lib/class-rotation";
 import type { SchoolClass } from "../../types";
 
 export default function ClassesPage() {
-  const { classes, loading, updateClass } = useClasses();
+  const [classes, setClasses] = useState<SchoolClass[]>([]);
+  const loading = false;
   const [knowledgeClass, setKnowledgeClass] = useState<SchoolClass | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("scc-onboarding");
+      if (raw) {
+        const data = JSON.parse(raw) as { classes?: SchoolClass[] };
+        if (Array.isArray(data.classes)) setClasses(data.classes);
+      }
+    } catch {}
+  }, []);
+
+  const updateClass = useCallback(async (id: string, updates: Partial<Omit<SchoolClass, "id">>) => {
+    setClasses((prev) => {
+      const updated = prev.map((c) => (c.id === id ? { ...c, ...updates } : c));
+      try {
+        const raw = localStorage.getItem("scc-onboarding");
+        const data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        localStorage.setItem("scc-onboarding", JSON.stringify({ ...data, classes: updated }));
+      } catch {}
+      return updated;
+    });
+  }, []);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-10">
@@ -18,17 +46,27 @@ export default function ClassesPage() {
           title="Classes"
           description="Your schedule at a glance."
         />
-        <a
-          href="/settings?tab=schedule"
-          className="shrink-0 self-center rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition hover:bg-surface hover:text-foreground"
-        >
-          Manage schedule
-        </a>
+        <div className="flex shrink-0 self-center gap-2">
+          <Link
+            href={`/chat?tutor=true`}
+            className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted transition hover:border-sidebar-accent/40 hover:bg-sidebar-accent/5 hover:text-foreground"
+          >
+            <span className="text-[10px] text-sidebar-accent">🎓</span>
+            Start tutoring
+          </Link>
+          <a
+            href="/settings?tab=schedule"
+            className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition hover:bg-surface hover:text-foreground"
+          >
+            Manage schedule
+          </a>
+        </div>
       </div>
 
       {loading && (
-        <div className="rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted shadow-sm">
-          Loading your classes...
+        <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted shadow-sm">
+          <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-border border-t-sidebar-accent" />
+          Loading your classes…
         </div>
       )}
 
@@ -38,12 +76,14 @@ export default function ClassesPage() {
 
       {!loading && classes.length === 0 && (
         <div className="space-y-4 rounded-2xl border border-dashed border-border bg-card p-10 text-center">
-          <p className="text-sm text-muted">No classes yet.</p>
+          <p className="text-sm text-muted">
+            Add your first class so the assistant understands your schedule.
+          </p>
           <a
             href="/settings?tab=schedule"
             className="inline-block rounded-full bg-accent-green-foreground px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
           >
-            Set up my schedule
+            Add Class
           </a>
         </div>
       )}
@@ -292,15 +332,17 @@ function ScheduleTimeline({
                         </span>
                       )}
 
-                      {cls.scheduleLabel && !isActive && (
+                      {formatRotationBadge(cls.rotationDays, cls.scheduleLabel) && !isActive && (
                         <span
                           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
-                            cls.scheduleLabel === "A"
+                            getClassRotationDays(cls).length === 2
+                              ? "bg-accent-green text-accent-green-foreground"
+                              : cls.scheduleLabel === "A"
                               ? "bg-accent-blue text-accent-blue-foreground"
                               : "bg-accent-purple text-accent-purple-foreground"
                           }`}
                         >
-                          {cls.scheduleLabel}
+                          {formatRotationBadge(cls.rotationDays, cls.scheduleLabel)}
                         </span>
                       )}
                       {cls.isApCourse && (
@@ -322,22 +364,31 @@ function ScheduleTimeline({
                     )}
                   </div>
 
-                  {onKnowledge && (
-                    <button
-                      type="button"
-                      onClick={() => onKnowledge(cls)}
-                      title="Class knowledge"
-                      className={`shrink-0 rounded-full p-1 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10 ${
-                        cls.syllabusText || cls.classNotes || cls.isApCourse
-                          ? "text-accent-green-foreground"
-                          : "text-muted"
-                      }`}
+                  <div className="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    <Link
+                      href={`/chat?q=${encodeURIComponent(`Help me with ${cls.name}. What should I focus on and how can I do well in this class?`)}`}
+                      title="Ask assistant about this class"
+                      className="flex items-center justify-center rounded-full bg-black/10 p-1 text-foreground/70 hover:bg-black/20"
                     >
-                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                      </svg>
-                    </button>
-                  )}
+                      <span className="text-[9px] leading-none">✦</span>
+                    </Link>
+                    {onKnowledge && (
+                      <button
+                        type="button"
+                        onClick={() => onKnowledge(cls)}
+                        title="Class knowledge"
+                        className={`rounded-full p-1 hover:bg-black/10 ${
+                          cls.syllabusText || cls.classNotes || cls.isApCourse
+                            ? "text-accent-green-foreground"
+                            : "text-muted"
+                        }`}
+                      >
+                        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Progress bar at the bottom of an active block */}
@@ -401,15 +452,17 @@ function UntimedSection({
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-sm font-semibold text-foreground">{cls.name}</span>
-                  {cls.scheduleLabel && (
+                  {formatRotationBadge(cls.rotationDays, cls.scheduleLabel) && (
                     <span
                       className={`rounded-full px-1.5 py-px text-[9px] font-bold ${
-                        cls.scheduleLabel === "A"
+                        getClassRotationDays(cls).length === 2
+                          ? "bg-accent-green text-accent-green-foreground"
+                          : cls.scheduleLabel === "A"
                           ? "bg-accent-blue text-accent-blue-foreground"
                           : "bg-accent-purple text-accent-purple-foreground"
                       }`}
                     >
-                      {cls.scheduleLabel}
+                      {formatRotationBadge(cls.rotationDays, cls.scheduleLabel)}
                     </span>
                   )}
                   {cls.isApCourse && (
@@ -422,20 +475,30 @@ function UntimedSection({
                   {[cls.teacherName, cls.room].filter(Boolean).join(" · ") || "No time or room set"}
                 </p>
               </div>
-              {onKnowledge && (
-                <button
-                  type="button"
-                  onClick={() => onKnowledge(cls)}
-                  title="Class knowledge"
-                  className={`shrink-0 rounded-full p-1 opacity-0 transition-all group-hover:opacity-100 hover:bg-surface ${
-                    hasKnowledge ? "text-accent-green-foreground" : "text-muted"
-                  }`}
+              <div className="flex shrink-0 items-center gap-1 opacity-0 transition-all group-hover:opacity-100">
+                <Link
+                  href={`/chat?q=${encodeURIComponent(`Help me with ${cls.name}. What should I focus on and how can I do well?`)}`}
+                  title="Ask assistant about this class"
+                  className="flex items-center gap-1 rounded-full border border-border px-2 py-1 text-[10px] font-medium text-muted hover:border-sidebar-accent/40 hover:text-foreground transition-colors"
                 >
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                  </svg>
-                </button>
-              )}
+                  <span className="text-[9px] text-sidebar-accent">✦</span>
+                  Ask
+                </Link>
+                {onKnowledge && (
+                  <button
+                    type="button"
+                    onClick={() => onKnowledge(cls)}
+                    title="Class knowledge"
+                    className={`rounded-full p-1 hover:bg-surface ${
+                      hasKnowledge ? "text-accent-green-foreground" : "text-muted"
+                    }`}
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}
@@ -461,7 +524,7 @@ function sortByStartTime(a: SchoolClass, b: SchoolClass): number {
   return aMin - bMin;
 }
 
-type DayLabel = NonNullable<SchoolClass["scheduleLabel"]>;
+type DayLabel = "A" | "B";
 
 function DayTypeScheduleView({
   classes,
@@ -472,13 +535,11 @@ function DayTypeScheduleView({
 }) {
   const dayLabels: DayLabel[] = Array.from(
     new Set(
-      classes
-        .map((c) => c.scheduleLabel)
-        .filter((l): l is DayLabel => l !== undefined)
+      classes.flatMap((c) => getClassRotationDays(c))
     )
   ).sort();
 
-  const everyday = [...classes.filter((c) => !c.scheduleLabel)].sort(sortByStartTime);
+  const everyday = [...classes.filter((c) => getClassRotationDays(c).length === 0)].sort(sortByStartTime);
   const hasRotation = dayLabels.length > 0;
 
   const [activeTab, setActiveTab] = useState<DayLabel | "">(dayLabels[0] ?? "");
@@ -501,7 +562,7 @@ function DayTypeScheduleView({
   }
 
   // Rotation exists — tab-based view
-  const rotationClasses = [...classes.filter((c) => effectiveTab && c.scheduleLabel === effectiveTab)].sort(sortByStartTime);
+  const rotationClasses = [...classes.filter((c) => effectiveTab && getClassRotationDays(c).includes(effectiveTab))].sort(sortByStartTime);
   const tabClasses = [...rotationClasses, ...everyday].sort(sortByStartTime);
 
   return (
@@ -509,7 +570,7 @@ function DayTypeScheduleView({
       {/* Tab bar */}
       <div className="flex border-b border-border">
         {dayLabels.map((label) => {
-          const count = classes.filter((c) => c.scheduleLabel === label).length;
+          const count = classes.filter((c) => getClassRotationDays(c).includes(label)).length;
           const isActive = label === effectiveTab;
           const { bg, text } = getDayLabelStyle(label);
           return (
@@ -670,6 +731,8 @@ function ClassKnowledgeModal({ schoolClass, onSave, onClose }: ClassKnowledgeMod
             />
           </label>
 
+          <ClassMaterialsPanel classId={schoolClass.id} />
+
           {error && (
             <p className="rounded-xl border border-accent-rose bg-accent-rose px-4 py-2.5 text-sm text-accent-rose-foreground">
               {error}
@@ -678,10 +741,20 @@ function ClassKnowledgeModal({ schoolClass, onSave, onClose }: ClassKnowledgeMod
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-3 border-t border-border px-6 py-4">
-          <p className="text-xs text-muted">
-            This info is only used to help the assistant answer questions about this class.
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-6 py-4">
+          <div className="flex items-center gap-3">
+            <p className="text-xs text-muted">
+              This info helps the assistant give smarter answers.
+            </p>
+            <Link
+              href={`/chat?q=${encodeURIComponent(`Let's talk about my ${schoolClass.name} class. Help me understand what I should focus on and how to do well.`)}`}
+              className="flex shrink-0 items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition hover:border-sidebar-accent/40 hover:text-foreground"
+              onClick={onClose}
+            >
+              <span className="text-[10px] text-sidebar-accent">✦</span>
+              Ask assistant
+            </Link>
+          </div>
           <div className="flex shrink-0 gap-2">
             <button
               type="button"

@@ -4,6 +4,7 @@ import {
   hasMixedTimes,
   sortedMeetings,
 } from "../lib/schedule";
+import { formatRotationBadge, getClassRotationDays } from "../lib/class-rotation";
 import type { SchoolClass } from "../types";
 
 const DAY_ABBR: Record<string, string> = {
@@ -30,16 +31,27 @@ export function ScheduleCard({ schoolClass, onDelete, onEdit, onKnowledge }: Sch
   const effectiveDays = getEffectiveDays(schoolClass);
   const mixedTimes = hasMixedTimes(schoolClass);
   const meetings = sortedMeetings(schoolClass);
+  const rotationBadge = formatRotationBadge(
+    schoolClass.rotationDays,
+    schoolClass.scheduleLabel,
+  );
+  const rotationDays = getClassRotationDays(schoolClass);
+  const rotationBadgeClass =
+    rotationDays.length === 2
+      ? "bg-accent-green text-accent-green-foreground"
+      : schoolClass.scheduleLabel === "A"
+        ? "bg-accent-blue text-accent-blue-foreground"
+        : "bg-accent-purple text-accent-purple-foreground";
 
   return (
-    <article className="flex overflow-hidden rounded-2xl border border-border bg-card shadow-card transition-shadow hover:shadow-card-md">
-      {/* Left color bar */}
-      <div
-        className="w-1.5 shrink-0"
-        style={{ backgroundColor: schoolClass.color ?? "#d4edd9" }}
-      />
-
-      <div className="flex-1 p-5">
+    <article
+      className="overflow-hidden rounded-2xl border border-border bg-card shadow-card transition-shadow hover:shadow-card-md"
+      style={{
+        borderLeftColor: schoolClass.color ?? "#d4edd9",
+        borderLeftWidth: "4px",
+      }}
+    >
+      <div className="p-5">
         {/* Header row */}
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -47,15 +59,11 @@ export function ScheduleCard({ schoolClass, onDelete, onEdit, onKnowledge }: Sch
               <h2 className="text-base font-bold text-foreground">{schoolClass.name}</h2>
 
               {/* A/B day badge */}
-              {schoolClass.scheduleLabel && (
+              {rotationBadge && (
                 <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                    schoolClass.scheduleLabel === "A"
-                      ? "bg-accent-blue text-accent-blue-foreground"
-                      : "bg-accent-purple text-accent-purple-foreground"
-                  }`}
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${rotationBadgeClass}`}
                 >
-                  {schoolClass.scheduleLabel}-Day
+                  {rotationBadge}
                 </span>
               )}
               {/* AP badge */}

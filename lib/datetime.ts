@@ -57,15 +57,38 @@ export function formatDate(dateInput: string | Date) {
   }).format(date);
 }
 
-export function formatDateTime(dateInput: string | Date) {
+/**
+ * Formats an ISO date string into a human-readable datetime string.
+ * Returns "Today at 3:14 PM", "Tomorrow at 11:59 PM", or "Mon Mar 11 at 11:59 PM".
+ */
+export function formatDateTime(dateInput: string | Date): string {
   const date = new Date(dateInput);
+  if (isNaN(date.getTime())) return "Invalid date";
 
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+  const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  const timeStr = new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+
+  if (dateStart.getTime() === todayStart.getTime()) {
+    return `Today at ${timeStr}`;
+  }
+
+  if (dateStart.getTime() === tomorrowStart.getTime()) {
+    return `Tomorrow at ${timeStr}`;
+  }
+
+  const dateStr = new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+  return `${dateStr} at ${timeStr}`;
 }
 
 export function isToday(dateInput: string | Date) {

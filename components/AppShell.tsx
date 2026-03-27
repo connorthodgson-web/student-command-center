@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { useAuth } from "../lib/auth-context";
+import { loadProfile } from "../lib/profile";
+import { OnboardingModal } from "./OnboardingModal";
 
 // primary: true items get a slightly elevated treatment when inactive
 const NAV_LINKS = [
@@ -164,11 +166,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
-  // Auth pages: no shell
-  if (pathname.startsWith("/auth")) {
+  // Auth and onboarding pages: no shell
+  if (pathname.startsWith("/auth") || pathname.startsWith("/onboarding")) {
     return <>{children}</>;
   }
+
+  // Detect first-time user on client only
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (!user) return;
+    const profile = loadProfile();
+    if (!profile.onboardingComplete) {
+      setShowOnboarding(true);
+    }
+  }, [user]);
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -215,23 +228,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        {/* Dev tools link — subtle */}
-        <Link
-          href="/dev/parse-test"
-          className={`block rounded-lg px-2 py-1 text-[10px] transition-colors ${
-            pathname.startsWith("/dev")
-              ? "text-sidebar-text/60"
-              : "text-sidebar-text/25 hover:text-sidebar-text/50"
-          }`}
-        >
-          Dev tools
-        </Link>
       </div>
     </>
   );
 
   return (
     <div className="min-h-screen bg-background">
+      {showOnboarding && (
+        <OnboardingModal onComplete={() => setShowOnboarding(false)} />
+      )}
       {/* ── Desktop sidebar ─────────────────────────────────────── */}
       <aside className="fixed inset-y-0 left-0 hidden w-[224px] flex-col bg-sidebar shadow-[1px_0_0_0_rgba(255,255,255,0.05)] md:flex">
         <Sidebar />
@@ -275,8 +280,120 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
+      {/* ── Mobile bottom nav ────────────────────────────────────── */}
+      <nav className="fixed inset-x-0 bottom-0 z-30 md:hidden">
+        <div className="border-t border-white/[0.08] bg-sidebar/95 backdrop-blur-md">
+          <div className="flex items-stretch">
+            {/* Home */}
+            <MobileNavItem href="/dashboard" label="Home" pathname={pathname}>
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                  d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 22V12h6v10" />
+              </svg>
+            </MobileNavItem>
+
+            {/* Tasks */}
+            <MobileNavItem href="/tasks" label="Tasks" pathname={pathname}>
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+            </MobileNavItem>
+
+            {/* Assistant — prominent center item */}
+            <div className="flex flex-1 items-center justify-center py-2">
+              <a
+                href="/chat"
+                className={`flex flex-col items-center gap-1 px-5 py-2 rounded-2xl transition-all ${
+                  pathname === "/chat" || pathname.startsWith("/chat/")
+                    ? "bg-sidebar-accent/25"
+                    : "hover:bg-white/5"
+                }`}
+              >
+                <span
+                  className={`flex h-10 w-10 items-center justify-center rounded-full text-base font-bold shadow-lg transition-all ${
+                    pathname === "/chat" || pathname.startsWith("/chat/")
+                      ? "bg-sidebar-accent text-[#0f2117] scale-105"
+                      : "bg-sidebar-accent/20 text-sidebar-accent"
+                  }`}
+                >
+                  ✦
+                </span>
+                <span
+                  className={`text-[10px] font-semibold transition-colors ${
+                    pathname === "/chat" || pathname.startsWith("/chat/")
+                      ? "text-sidebar-accent"
+                      : "text-sidebar-text/60"
+                  }`}
+                >
+                  Assistant
+                </span>
+              </a>
+            </div>
+
+            {/* Classes */}
+            <MobileNavItem href="/classes" label="Classes" pathname={pathname}>
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                  d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+            </MobileNavItem>
+
+            {/* Settings */}
+            <MobileNavItem href="/settings" label="Settings" pathname={pathname}>
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <circle cx="12" cy="12" r="3" strokeWidth={1.8} />
+              </svg>
+            </MobileNavItem>
+          </div>
+
+          {/* Safe area spacer for notched phones */}
+          <div className="h-safe-bottom" style={{ height: "env(safe-area-inset-bottom, 0px)" }} />
+        </div>
+      </nav>
+
       {/* ── Main content ─────────────────────────────────────────── */}
-      <main className="md:ml-[224px]">{children}</main>
+      <main className="md:ml-[224px] pb-[72px] md:pb-0">{children}</main>
     </div>
+  );
+}
+
+// ── Mobile nav item ───────────────────────────────────────────────────────────
+
+function MobileNavItem({
+  href,
+  label,
+  pathname,
+  children,
+}: {
+  href: string;
+  label: string;
+  pathname: string;
+  children: React.ReactNode;
+}) {
+  const isActive = pathname === href || pathname.startsWith(href + "/");
+  return (
+    <a
+      href={href}
+      className="flex flex-1 flex-col items-center justify-center gap-1 py-3 transition-colors"
+    >
+      <span
+        className={`transition-colors ${
+          isActive ? "text-sidebar-accent" : "text-sidebar-text/50"
+        }`}
+      >
+        {children}
+      </span>
+      <span
+        className={`text-[10px] font-medium transition-colors ${
+          isActive ? "text-sidebar-accent" : "text-sidebar-text/40"
+        }`}
+      >
+        {label}
+      </span>
+    </a>
   );
 }

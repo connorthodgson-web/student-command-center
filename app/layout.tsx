@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
-import { AppShell } from "../components/AppShell";
+import { Nav } from "../components/Nav";
 
 export const metadata: Metadata = {
   title: "Student Command Center",
@@ -38,7 +38,11 @@ export default function RootLayout({
       </head>
       <body>
         <Providers>
-          <AppShell>{children}</AppShell>
+          <Nav />
+          {/* pb-[72px] prevents content from hiding behind the mobile bottom nav */}
+          <div className="pb-[72px] md:pb-0">
+            {children}
+          </div>
         </Providers>
       </body>
     </html>

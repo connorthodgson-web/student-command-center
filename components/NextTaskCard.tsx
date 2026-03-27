@@ -37,7 +37,10 @@ export function NextTaskCard({ task, schoolClass }: NextTaskCardProps) {
       </div>
 
       {task ? (
-        <div className={`mt-4 rounded-xl border border-border border-l-4 ${borderColor} bg-background p-4`}>
+        <div
+          className={`mt-4 rounded-xl border border-border border-l-4 ${borderColor} bg-background p-4`}
+          style={schoolClass?.color ? { borderLeftColor: schoolClass.color } : undefined}
+        >
           <h3 className="text-[15px] font-semibold text-foreground">{task.title}</h3>
           <p className="mt-1 text-sm text-muted">
             {schoolClass ? schoolClass.name : "General school task"}

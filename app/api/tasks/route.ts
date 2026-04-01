@@ -119,10 +119,14 @@ export async function PATCH(request: Request) {
       .eq("id", body.id)
       .eq("user_id", userId)
       .select("*")
-      .single();
+      .maybeSingle();
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    if (!data) {
+      return NextResponse.json({ error: "Task not found." }, { status: 404 });
     }
 
     return NextResponse.json({ data: mapDbTaskToStudentTask(data as DbTaskRow) });
@@ -143,14 +147,20 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Task id is required." }, { status: 400 });
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("tasks")
     .delete()
     .eq("id", body.id)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  if (!data) {
+    return NextResponse.json({ error: "Task not found." }, { status: 404 });
   }
 
   return NextResponse.json({ success: true });

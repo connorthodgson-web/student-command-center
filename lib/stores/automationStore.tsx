@@ -1,94 +1,143 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useAuth } from "../auth-context";
 import type { Automation } from "../../types";
-
-// TODO: Replace localStorage with Supabase persistence once the automations
-// table is created. Follow the pattern in lib/stores/classStore.tsx.
-const STORAGE_KEY = "scc_automations_v1";
+import type { AutomationInsert, AutomationUpdate } from "../automations-data";
 
 type AutomationStoreContextValue = {
   automations: Automation[];
-  addAutomation: (automation: Omit<Automation, "id" | "createdAt" | "updatedAt">) => void;
-  updateAutomation: (id: string, updates: Partial<Automation>) => void;
-  removeAutomation: (id: string) => void;
-  toggleAutomation: (id: string) => void;
+  loading: boolean;
+  reloadAutomations: () => Promise<void>;
+  addAutomation: (automation: AutomationInsert) => Promise<Automation>;
+  updateAutomation: (id: string, updates: AutomationUpdate) => Promise<Automation>;
+  removeAutomation: (id: string) => Promise<void>;
+  toggleAutomation: (id: string) => Promise<Automation>;
 };
 
 const AutomationStoreContext = createContext<AutomationStoreContextValue | null>(null);
 
-function newId(): string {
-  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2);
-}
-
 export function AutomationStoreProvider({ children }: { children: React.ReactNode }) {
+  const { user, loading: authLoading } = useAuth();
   const [automations, setAutomations] = useState<Automation[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Hydrate from localStorage on mount
+  const loadAutomations = useCallback(async () => {
+    if (!user) {
+      setAutomations([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch("/api/automations", { cache: "no-store" });
+      const json = (await response.json()) as { data?: Automation[]; error?: string };
+
+      if (!response.ok) {
+        throw new Error(json.error ?? "Failed to load automations.");
+      }
+
+      setAutomations(json.data ?? []);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setAutomations(JSON.parse(raw) as Automation[]);
-    } catch {
-      // Silently ignore parse or storage errors
+    if (authLoading) return;
+    void loadAutomations();
+  }, [authLoading, loadAutomations]);
+
+  const addAutomation = useCallback(async (automation: AutomationInsert) => {
+    const response = await fetch("/api/automations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ automation }),
+    });
+    const json = (await response.json()) as { data?: Automation; error?: string };
+
+    if (!response.ok || !json.data) {
+      throw new Error(json.error ?? "Failed to save automation.");
     }
+
+    setAutomations((prev) => [json.data!, ...prev]);
+    return json.data;
   }, []);
 
-  const persist = useCallback((next: Automation[]) => {
-    setAutomations(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // Silently ignore storage errors
+  const updateAutomation = useCallback(async (id: string, updates: AutomationUpdate) => {
+    const response = await fetch("/api/automations", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, updates }),
+    });
+    const json = (await response.json()) as { data?: Automation; error?: string };
+
+    if (!response.ok || !json.data) {
+      throw new Error(json.error ?? "Failed to update automation.");
     }
+
+    setAutomations((prev) => prev.map((item) => (item.id === id ? json.data! : item)));
+    return json.data;
   }, []);
 
-  const addAutomation = useCallback(
-    (automation: Omit<Automation, "id" | "createdAt" | "updatedAt">) => {
-      const now = new Date().toISOString();
-      const next: Automation = { ...automation, id: newId(), createdAt: now, updatedAt: now };
-      persist([...automations, next]);
-    },
-    [automations, persist]
-  );
+  const removeAutomation = useCallback(async (id: string) => {
+    const response = await fetch("/api/automations", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    const json = (await response.json()) as { error?: string };
 
-  const updateAutomation = useCallback(
-    (id: string, updates: Partial<Automation>) => {
-      persist(
-        automations.map((a) =>
-          a.id === id ? { ...a, ...updates, updatedAt: new Date().toISOString() } : a
-        )
-      );
-    },
-    [automations, persist]
-  );
+    if (!response.ok) {
+      throw new Error(json.error ?? "Failed to delete automation.");
+    }
 
-  const removeAutomation = useCallback(
-    (id: string) => {
-      persist(automations.filter((a) => a.id !== id));
-    },
-    [automations, persist]
-  );
+    setAutomations((prev) => prev.filter((item) => item.id !== id));
+  }, []);
 
   const toggleAutomation = useCallback(
-    (id: string) => {
-      persist(
-        automations.map((a) =>
-          a.id === id
-            ? { ...a, enabled: !a.enabled, updatedAt: new Date().toISOString() }
-            : a
-        )
-      );
+    async (id: string) => {
+      const current = automations.find((item) => item.id === id);
+      if (!current) {
+        throw new Error("Automation not found.");
+      }
+
+      return updateAutomation(id, { enabled: !current.enabled });
     },
-    [automations, persist]
+    [automations, updateAutomation],
+  );
+
+  const value = useMemo(
+    () => ({
+      automations,
+      loading,
+      reloadAutomations: loadAutomations,
+      addAutomation,
+      updateAutomation,
+      removeAutomation,
+      toggleAutomation,
+    }),
+    [
+      automations,
+      loading,
+      loadAutomations,
+      addAutomation,
+      updateAutomation,
+      removeAutomation,
+      toggleAutomation,
+    ],
   );
 
   return (
-    <AutomationStoreContext.Provider
-      value={{ automations, addAutomation, updateAutomation, removeAutomation, toggleAutomation }}
-    >
+    <AutomationStoreContext.Provider value={value}>
       {children}
     </AutomationStoreContext.Provider>
   );

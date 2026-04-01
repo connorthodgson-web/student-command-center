@@ -4,7 +4,11 @@ import type {
   AssistantSessionChannel,
   AssistantSessionInput,
   AssistantMessageContentType,
+  Automation,
+  PlanningItem,
   ReminderPreference,
+  RotationDay,
+  ScheduleArchitecture,
   SchoolCalendarEntry,
   SchoolClass,
   StudentTask,
@@ -12,8 +16,6 @@ import type {
   TutoringMode,
 } from "../types";
 import type { StudentProfile } from "./profile";
-import type { Activity } from "./activities";
-import type { LifeConstraint } from "./constraints";
 
 type HistoryMessage = { role: "user" | "assistant"; content: string };
 
@@ -25,10 +27,11 @@ export type LegacyAssistantChatRequest = {
   classes?: SchoolClass[];
   currentDatetime?: string;
   calendarEntries?: SchoolCalendarEntry[];
-  effectiveDayType?: "A" | "B" | null;
+  effectiveDayType?: RotationDay | null;
+  scheduleArchitecture?: ScheduleArchitecture;
   profile?: StudentProfile;
-  activities?: Activity[];
-  constraints?: LifeConstraint[];
+  automations?: Automation[];
+  planningItems?: PlanningItem[];
   source?: AssistantMessageContentType;
   channel?: AssistantSessionChannel;
   classId?: string;
@@ -51,10 +54,11 @@ export type NormalizedAssistantRequest = {
   classes?: SchoolClass[];
   currentDatetime?: string;
   calendarEntries?: SchoolCalendarEntry[];
-  effectiveDayType?: "A" | "B" | null;
+  effectiveDayType?: RotationDay | null;
+  scheduleArchitecture?: ScheduleArchitecture;
   profile?: StudentProfile;
-  activities?: Activity[];
-  constraints?: LifeConstraint[];
+  automations?: Automation[];
+  planningItems?: PlanningItem[];
   assistant: AssistantRequestInput;
 };
 
@@ -80,9 +84,10 @@ export function normalizeAssistantRequest(
     currentDatetime: body.currentDatetime,
     calendarEntries: body.calendarEntries,
     effectiveDayType: body.effectiveDayType,
+    scheduleArchitecture: body.scheduleArchitecture,
     profile: body.profile,
-    activities: body.activities,
-    constraints: body.constraints,
+    automations: body.automations,
+    planningItems: body.planningItems,
     assistant: {
       message,
       source: body.source ?? "text",

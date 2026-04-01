@@ -1,109 +1,135 @@
 import { NextResponse } from "next/server";
-import { createClient } from "../../../lib/supabase/server";
-import type { Automation } from "../../../types";
+import {
+  mapAutomationToInsert,
+  mapAutomationToUpdate,
+  mapDbAutomation,
+  type AutomationInsert,
+  type AutomationUpdate,
+  type DbAutomationRow,
+} from "../../../lib/automations-data";
+import { getAuthedSupabase } from "../../../lib/supabase/route-auth";
 
-// TODO: Create a `automations` table in Supabase with these columns:
-//   id uuid primary key default gen_random_uuid()
-//   user_id uuid references auth.users not null
-//   type text not null
-//   title text not null
-//   schedule_description text not null
-//   schedule_config jsonb not null default '{}'
-//   enabled boolean not null default true
-//   delivery_channel text not null default 'in_app'
-//   related_class_id uuid references classes(id) on delete set null
-//   related_task_id uuid
-//   created_at timestamptz not null default now()
-//   updated_at timestamptz not null default now()
-//
-// Until the table exists, these endpoints return stub responses so the UI
-// and store can be built independently of database work.
+type CreateAutomationRequest = {
+  automation?: AutomationInsert;
+};
 
-async function getAuthedSupabase() {
-  const supabase = await createClient();
-  if (!supabase) {
-    return { response: NextResponse.json({ error: "Supabase not configured" }, { status: 503 }) };
-  }
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-  if (error || !user) {
-    return { response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  }
-  return { supabase, userId: user.id };
-}
+type UpdateAutomationRequest = {
+  id?: string;
+  updates?: AutomationUpdate;
+};
+
+type DeleteAutomationRequest = {
+  id?: string;
+};
 
 export async function GET() {
   const auth = await getAuthedSupabase();
   if ("response" in auth) return auth.response;
 
-  // TODO: Query the automations table once it exists.
-  // const { data, error } = await auth.supabase
-  //   .from("automations")
-  //   .select("*")
-  //   .eq("user_id", auth.userId)
-  //   .order("created_at", { ascending: false });
+  const { supabase, userId } = auth;
+  const { data, error } = await supabase
+    .from("automations")
+    .select("*")
+    .eq("user_id", userId)
+    .order("enabled", { ascending: false })
+    .order("updated_at", { ascending: false });
 
-  return NextResponse.json({ automations: [] });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({
+    data: ((data ?? []) as DbAutomationRow[]).map(mapDbAutomation),
+  });
 }
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   const auth = await getAuthedSupabase();
   if ("response" in auth) return auth.response;
 
-  const body = await req.json().catch(() => ({}));
-  const automation = body as Omit<Automation, "id" | "userId" | "createdAt" | "updatedAt">;
+  const { supabase, userId } = auth;
+  const body = (await request.json()) as CreateAutomationRequest;
 
-  // TODO: Insert into Supabase automations table.
-  // const { data, error } = await auth.supabase
-  //   .from("automations")
-  //   .insert({ ...automation, user_id: auth.userId })
-  //   .select()
-  //   .single();
+  if (!body.automation) {
+    return NextResponse.json({ error: "Automation payload is required." }, { status: 400 });
+  }
 
-  console.log("[automations] POST stub – would create:", automation);
-  return NextResponse.json({ automation: null, stub: true }, { status: 201 });
+  try {
+    const { data, error } = await supabase
+      .from("automations")
+      .insert(mapAutomationToInsert(body.automation, userId))
+      .select("*")
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json(
+      { data: mapDbAutomation(data as DbAutomationRow) },
+      { status: 201 },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid automation payload.";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
 }
 
-export async function PATCH(req: Request) {
+export async function PATCH(request: Request) {
   const auth = await getAuthedSupabase();
   if ("response" in auth) return auth.response;
 
-  const body = await req.json().catch(() => ({}));
-  const { id, updates } = body as { id?: string; updates?: Partial<Automation> };
+  const { supabase, userId } = auth;
+  const body = (await request.json()) as UpdateAutomationRequest;
 
-  if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
+  if (!body.id) {
+    return NextResponse.json({ error: "Automation id is required." }, { status: 400 });
+  }
 
-  // TODO: Update the automations table.
-  // const { data, error } = await auth.supabase
-  //   .from("automations")
-  //   .update({ ...updates, updated_at: new Date().toISOString() })
-  //   .eq("id", id)
-  //   .eq("user_id", auth.userId)
-  //   .select()
-  //   .single();
+  if (!body.updates || Object.keys(body.updates).length === 0) {
+    return NextResponse.json({ error: "Automation updates are required." }, { status: 400 });
+  }
 
-  console.log("[automations] PATCH stub – would update:", id, updates);
-  return NextResponse.json({ automation: null, stub: true });
+  try {
+    const { data, error } = await supabase
+      .from("automations")
+      .update(mapAutomationToUpdate(body.updates))
+      .eq("id", body.id)
+      .eq("user_id", userId)
+      .select("*")
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ data: mapDbAutomation(data as DbAutomationRow) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid automation updates.";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
 }
 
-export async function DELETE(req: Request) {
+export async function DELETE(request: Request) {
   const auth = await getAuthedSupabase();
   if ("response" in auth) return auth.response;
 
-  const body = await req.json().catch(() => ({}));
-  const { id } = body as { id?: string };
+  const { supabase, userId } = auth;
+  const body = (await request.json()) as DeleteAutomationRequest;
 
-  if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
+  if (!body.id) {
+    return NextResponse.json({ error: "Automation id is required." }, { status: 400 });
+  }
 
-  // TODO: Delete from the automations table.
-  // const { error } = await auth.supabase
-  //   .from("automations")
-  //   .delete()
-  //   .eq("id", id)
-  //   .eq("user_id", auth.userId);
+  const { error } = await supabase
+    .from("automations")
+    .delete()
+    .eq("id", body.id)
+    .eq("user_id", userId);
 
-  console.log("[automations] DELETE stub – would delete:", id);
-  return NextResponse.json({ success: true, stub: true });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
 }

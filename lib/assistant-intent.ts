@@ -53,6 +53,12 @@ const NEXT_STEP_HINTS = [
   "where should i start",
   "what next",
   "what should i focus on",
+  "help me prioritize",
+  "what's most important",
+  "what do i do first",
+  "help me plan",
+  "what should i study",
+  "how do i start",
 ];
 
 const TASK_CAPTURE_HINTS = [
@@ -66,6 +72,12 @@ const TASK_CAPTURE_HINTS = [
   "add a",
   "log a",
   "i have a",
+  "i have an",
+  "there's a",
+  "there is a",
+  "create a task",
+  "log my",
+  "save this task",
 ];
 
 const TASK_UPDATE_HINTS = [
@@ -83,6 +95,11 @@ const TASK_UPDATE_HINTS = [
   "rename the",
   "change the title",
   "push back my",
+  "extend my",
+  "push my",
+  "delay my",
+  "mark my",
+  "set my",
 ];
 
 const SCHEDULE_SETUP_HINTS = [
@@ -90,6 +107,7 @@ const SCHEDULE_SETUP_HINTS = [
   "build my schedule",
   "help me set up my",
   "help me add my classes",
+  "help me add my class schedule",
   "my classes are",
   "my schedule is",
   "add these classes",
@@ -97,6 +115,15 @@ const SCHEDULE_SETUP_HINTS = [
   "my a-day classes",
   "my b-day classes",
   "set up my classes",
+  "add a class",
+  "add new class",
+  "enter my schedule",
+  "enter my classes",
+  "update my schedule",
+  "i need to add my classes",
+  "here are my classes",
+  "here's my schedule",
+  "i have these classes",
 ];
 
 export function detectAssistantIntent(message: string, classes: SchoolClass[]): AssistantIntent {

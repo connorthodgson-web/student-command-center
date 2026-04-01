@@ -1,23 +1,35 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useTheme, ACCENT_META, SIDEBAR_META } from "../../lib/theme-context";
-import type { ThemeMode, AccentColor, SidebarTheme } from "../../lib/theme-context";
+import { useTheme, THEME_META } from "../../lib/theme-context";
 import { useReminderStore } from "../../lib/reminder-store";
 import { loadProfile, saveProfile } from "../../lib/profile";
 import type { StudentProfile, AssistantTone, AiModel } from "../../lib/profile";
 import { useClasses } from "../../lib/stores/classStore";
+import { useScheduleConfig } from "../../lib/stores/scheduleConfig";
 import { MessagingSettingsCard } from "../../components/MessagingSettingsCard";
 import { ReminderDeliveryCard } from "../../components/ReminderDeliveryCard";
+import { ReminderSettingsCard } from "../../components/ReminderSettingsCard";
 import { ScheduleSetupInput } from "../../components/ScheduleSetupInput";
 import { ScheduleCard } from "../../components/ScheduleCard";
+import { ClassColorField } from "../../components/ClassColorField";
 import { detectApCourse } from "../../lib/ap-detection";
 import {
   deriveScheduleLabel,
   getRotationSelectionValue,
   rotationSelectionToDays,
 } from "../../lib/class-rotation";
-import type { ClassMeetingTime, SchoolClass, Weekday } from "../../types";
+import {
+  getRotationLabelsForArchitecture,
+  normalizeRotationLabels,
+} from "../../lib/schedule-architecture";
+import {
+  DEFAULT_CLASS_COLOR,
+  resolveClassColor,
+} from "../../lib/class-colors";
+import type { ThemeMode, ThemePreset } from "../../lib/theme-system";
+import type { ClassMeetingTime, RotationDay, SchoolClass, Weekday } from "../../types";
 
 // ── Tab system ────────────────────────────────────────────────────────────────
 
@@ -26,22 +38,12 @@ type Tab = "appearance" | "notifications" | "messaging" | "profile" | "schedule"
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "appearance",    label: "Appearance",    icon: "◑" },
   { id: "notifications", label: "Notifications", icon: "◎" },
+  { id: "messaging",     label: "Messaging",     icon: "✉" },
   { id: "profile",       label: "Profile",       icon: "◉" },
   { id: "schedule",      label: "Schedule",      icon: "◷" },
 ];
 
-TABS.splice(1, 0, { id: "messaging", label: "Messaging", icon: "SMS" });
-
 // ── Schedule tab constants ─────────────────────────────────────────────────────
-
-const COLOR_SWATCHES: { label: string; value: string }[] = [
-  { label: "Green",    value: "#d4edd9" },
-  { label: "Blue",     value: "#d4e6f7" },
-  { label: "Amber",    value: "#fdefd3" },
-  { label: "Rose",     value: "#fde0e0" },
-  { label: "Lavender", value: "#ebe0fd" },
-  { label: "Slate",    value: "#dde3e8" },
-];
 
 const WEEKDAYS: { label: string; value: Weekday }[] = [
   { label: "Mon", value: "monday" },
@@ -53,20 +55,17 @@ const WEEKDAYS: { label: string; value: Weekday }[] = [
   { label: "Sun", value: "sunday" },
 ];
 
-type RotationOption = "" | "A" | "B" | "AB";
 type DayTime = { start: string; end: string };
 
 // ── Mode picker card ──────────────────────────────────────────────────────────
 
 function ModeCard({
-  id,
   label,
   description,
   icon,
   selected,
   onClick,
 }: {
-  id: ThemeMode;
   label: string;
   description: string;
   icon: React.ReactNode;
@@ -77,29 +76,29 @@ function ModeCard({
     <button
       type="button"
       onClick={onClick}
-      className={`relative flex flex-col items-center gap-3 rounded-2xl border-2 p-5 text-center transition-all ${
+      className={`relative flex flex-col items-center gap-2 rounded-2xl border-2 p-3 text-center transition-all sm:gap-3 sm:p-5 ${
         selected
           ? "border-sidebar-accent bg-sidebar-accent/10 shadow-card-md"
           : "border-border bg-card hover:border-border hover:bg-surface"
       }`}
     >
       {selected && (
-        <span className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-[#0f2117]">
+        <span className="absolute right-2 top-2 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-hero sm:right-3 sm:top-3">
           ✓
         </span>
       )}
       <div
-        className={`flex h-12 w-full items-center justify-center rounded-xl text-2xl transition-colors ${
+        className={`flex h-10 w-full items-center justify-center rounded-xl text-xl transition-colors sm:h-12 sm:text-2xl ${
           selected ? "bg-sidebar-accent/20" : "bg-surface"
         }`}
       >
         {icon}
       </div>
       <div>
-        <p className={`text-sm font-semibold ${selected ? "text-foreground" : "text-foreground"}`}>
+        <p className="text-xs font-semibold text-foreground sm:text-sm">
           {label}
         </p>
-        <p className="mt-0.5 text-[11px] text-muted">{description}</p>
+        <p className="mt-0.5 hidden text-[11px] text-muted sm:block">{description}</p>
       </div>
     </button>
   );
@@ -107,16 +106,18 @@ function ModeCard({
 
 // ── Accent swatch ─────────────────────────────────────────────────────────────
 
-function AccentSwatch({
-  accent,
-  hex,
+function ThemePresetCard({
+  theme,
+  preview,
   label,
+  description,
   selected,
   onClick,
 }: {
-  accent: AccentColor;
-  hex: string;
+  theme: ThemePreset;
+  preview: { panel: string; accent: string; surface: string };
   label: string;
+  description: string;
   selected: boolean;
   onClick: () => void;
 }) {
@@ -124,76 +125,35 @@ function AccentSwatch({
     <button
       type="button"
       onClick={onClick}
-      className="group flex flex-col items-center gap-2"
+      className={`relative rounded-2xl border p-4 text-left transition-all ${
+        selected
+          ? "border-sidebar-accent bg-sidebar-accent/10 shadow-card-md"
+          : "border-border bg-card hover:bg-surface"
+      }`}
       title={label}
     >
-      <span
-        className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-all ${
-          selected ? "ring-2 ring-offset-2 ring-offset-card scale-110" : "hover:scale-105"
-        }`}
-        style={
-          {
-            backgroundColor: hex,
-            "--tw-ring-color": selected ? hex : undefined,
-          } as React.CSSProperties
-        }
-      >
-        {selected && (
-          <svg className="h-4 w-4 text-white drop-shadow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-          </svg>
-        )}
-      </span>
-      <span className={`text-[11px] font-medium ${selected ? "text-foreground" : "text-muted"}`}>
-        {label}
-      </span>
+      {selected && (
+        <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-sidebar-accent text-[10px] font-bold text-hero">
+          ✓
+        </span>
+      )}
+      <div className="rounded-xl border border-border/60 p-3" style={{ backgroundColor: preview.surface }}>
+        <div className="flex items-center gap-2">
+          <span className="h-8 w-8 rounded-lg" style={{ backgroundColor: preview.panel }} />
+          <div className="flex-1 rounded-lg px-3 py-2" style={{ backgroundColor: preview.accent, opacity: 0.18 }} />
+        </div>
+      </div>
+      <div className="mt-3">
+        <p className="text-sm font-semibold text-foreground">{label}</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted">{description}</p>
+      </div>
+      <span className="sr-only">{theme}</span>
     </button>
   );
 }
-
-// ── Toggle row (reusable) ─────────────────────────────────────────────────────
-
-function ToggleRow({
-  title,
-  description,
-  enabled,
-  onToggle,
-}: {
-  title: string;
-  description: string;
-  enabled: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-background px-4 py-3.5 text-left transition hover:bg-surface"
-    >
-      <span className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{title}</span>
-        <span className="mt-0.5 block text-xs text-muted">{description}</span>
-      </span>
-      {/* Toggle switch */}
-      <span
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-          enabled ? "bg-sidebar-accent" : "bg-border"
-        }`}
-      >
-        <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-            enabled ? "translate-x-[18px]" : "translate-x-[3px]"
-          }`}
-        />
-      </span>
-    </button>
-  );
-}
-
-// ── Appearance tab ────────────────────────────────────────────────────────────
 
 function AppearanceTab() {
-  const { mode, accent, sidebar, setMode, setAccent, setSidebar } = useTheme();
+  const { mode, theme, setMode, setTheme } = useTheme();
 
   const modes: {
     id: ThemeMode;
@@ -247,7 +207,6 @@ function AppearanceTab() {
           {modes.map((m) => (
             <ModeCard
               key={m.id}
-              id={m.id}
               label={m.label}
               description={m.description}
               icon={m.icon}
@@ -258,24 +217,25 @@ function AppearanceTab() {
         </div>
       </section>
 
-      {/* Accent color */}
+      {/* Theme preset */}
       <section>
         <div className="mb-4">
-          <h2 className="text-base font-semibold text-foreground">Accent color</h2>
+          <h2 className="text-base font-semibold text-foreground">Theme preset</h2>
           <p className="mt-1 text-sm text-muted">
-            Changes the navigation highlight and interactive accents.
+            Each preset changes the sidebar color and accent throughout the app.
           </p>
         </div>
-        <div className="flex flex-wrap gap-6">
-          {(Object.entries(ACCENT_META) as [AccentColor, typeof ACCENT_META[AccentColor]][]).map(
+        <div className="grid gap-3 sm:grid-cols-2">
+          {(Object.entries(THEME_META) as [ThemePreset, typeof THEME_META[ThemePreset]][]).map(
             ([key, meta]) => (
-              <AccentSwatch
+              <ThemePresetCard
                 key={key}
-                accent={key}
-                hex={meta.hex}
+                theme={key}
+                preview={meta.preview}
                 label={meta.label}
-                selected={accent === key}
-                onClick={() => setAccent(key)}
+                description={meta.description}
+                selected={theme === key}
+                onClick={() => setTheme(key)}
               />
             )
           )}
@@ -285,53 +245,16 @@ function AppearanceTab() {
         <div className="mt-6 flex items-center gap-3 rounded-xl border border-border bg-card p-4">
           <div
             className="h-8 w-8 shrink-0 rounded-full shadow-sm"
-            style={{ backgroundColor: ACCENT_META[accent].hex }}
+            style={{ backgroundColor: THEME_META[theme].preview.accent }}
           />
           <div>
             <p className="text-sm font-medium text-foreground">
-              {ACCENT_META[accent].label} theme active
+              {THEME_META[theme].label} — active theme
             </p>
             <p className="text-xs text-muted">
-              Navigation highlight and interactive elements use this accent.
+              Changes the sidebar color and accent throughout the app.
             </p>
           </div>
-        </div>
-      </section>
-
-      {/* Sidebar color */}
-      <section>
-        <div className="mb-4">
-          <h2 className="text-base font-semibold text-foreground">Navigation color</h2>
-          <p className="mt-1 text-sm text-muted">
-            Changes the color of the sidebar and header navigation panels.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {(Object.entries(SIDEBAR_META) as [SidebarTheme, typeof SIDEBAR_META[SidebarTheme]][]).map(
-            ([key, meta]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setSidebar(key)}
-                className={`relative flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition-all ${
-                  sidebar === key
-                    ? "border-sidebar-accent bg-sidebar-accent/10"
-                    : "border-border bg-card hover:bg-surface"
-                }`}
-              >
-                {sidebar === key && (
-                  <span className="absolute right-2.5 top-2.5 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-hero">
-                    ✓
-                  </span>
-                )}
-                <span
-                  className="h-7 w-7 shrink-0 rounded-full shadow-sm"
-                  style={{ backgroundColor: meta.bg }}
-                />
-                <span className="text-sm font-medium text-foreground">{meta.label}</span>
-              </button>
-            )
-          )}
         </div>
       </section>
 
@@ -350,142 +273,80 @@ function AppearanceTab() {
 // ── Notifications tab ─────────────────────────────────────────────────────────
 
 function NotificationsTab() {
-  const { preferences, loading, updatePreferences } = useReminderStore();
-  const [savingKey, setSavingKey] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  const save = async (partial: Partial<typeof preferences>, key: string) => {
-    setSavingKey(key);
-    setSaveError(null);
-    try {
-      await updatePreferences(partial);
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Failed to save reminder settings.");
-    } finally {
-      setSavingKey(null);
-    }
-  };
-
-  const toggle = (key: "dailySummaryEnabled" | "tonightSummaryEnabled" | "dueSoonRemindersEnabled") => {
-    void save({ [key]: !preferences[key] }, key);
-  };
+  const { preferences } = useReminderStore();
 
   return (
     <div className="space-y-8">
-      {/* Summaries group */}
-      <section>
-        <div className="mb-4">
-          <h2 className="text-base font-semibold text-foreground">Summaries</h2>
-          <p className="mt-1 text-sm text-muted">
-            Get a daily or nightly overview of your work and upcoming classes.
-          </p>
-        </div>
-        <div className="space-y-2">
-          <ToggleRow
-            title="Daily summary"
-            description={
-              preferences.dailySummaryEnabled
-                ? `Enabled at ${preferences.dailySummaryTime ?? "a saved time"}`
-                : "Off — toggle to enable a morning overview"
-            }
-            enabled={preferences.dailySummaryEnabled}
-            onToggle={() => toggle("dailySummaryEnabled")}
-          />
-          <label className="block rounded-xl border border-border bg-background px-4 py-3">
-            <span className="mb-1.5 block text-xs font-medium text-muted">Daily summary time</span>
-            <input
-              type="time"
-              value={preferences.dailySummaryTime ?? "07:00"}
-              disabled={loading || savingKey === "dailySummaryTime"}
-              onChange={(event) =>
-                void save({ dailySummaryTime: event.target.value }, "dailySummaryTime")
-              }
-              className="w-full bg-transparent text-sm text-foreground outline-none"
-            />
-          </label>
-          <ToggleRow
-            title="Tonight summary"
-            description={
-              preferences.tonightSummaryEnabled
-                ? `Enabled at ${preferences.tonightSummaryTime ?? "a saved time"}`
-                : "Off — toggle to enable an evening recap"
-            }
-            enabled={preferences.tonightSummaryEnabled}
-            onToggle={() => toggle("tonightSummaryEnabled")}
-          />
-          <label className="block rounded-xl border border-border bg-background px-4 py-3">
-            <span className="mb-1.5 block text-xs font-medium text-muted">Tonight summary time</span>
-            <input
-              type="time"
-              value={preferences.tonightSummaryTime ?? "19:00"}
-              disabled={loading || savingKey === "tonightSummaryTime"}
-              onChange={(event) =>
-                void save({ tonightSummaryTime: event.target.value }, "tonightSummaryTime")
-              }
-              className="w-full bg-transparent text-sm text-foreground outline-none"
-            />
-          </label>
+      <section className="rounded-2xl border border-border bg-card p-5">
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted">How reminders work</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-border bg-background px-4 py-3">
+            <p className="text-sm font-semibold text-foreground">Settings</p>
+            <p className="mt-1 text-xs text-muted">
+              Choose how reminders reach you.
+            </p>
+          </div>
+          <Link href="/automations" className="rounded-xl border border-border bg-background px-4 py-3 transition hover:bg-surface">
+            <p className="text-sm font-semibold text-foreground">Automations</p>
+            <p className="mt-1 text-xs text-muted">
+              Decide what reminders run and when they fire.
+            </p>
+          </Link>
+          <Link href="/activities" className="rounded-xl border border-border bg-background px-4 py-3 transition hover:bg-surface">
+            <p className="text-sm font-semibold text-foreground">Activities</p>
+            <p className="mt-1 text-xs text-muted">
+              Save events and recurring commitments the assistant should plan around.
+            </p>
+          </Link>
         </div>
       </section>
 
-      {/* Reminders group */}
       <section>
         <div className="mb-4">
-          <h2 className="text-base font-semibold text-foreground">Due date reminders</h2>
+          <h2 className="text-base font-semibold text-foreground">Built-in reminder defaults</h2>
           <p className="mt-1 text-sm text-muted">
-            Get alerted before assignments and tests are due.
+            These are the quick reminder preferences the assistant reads today.
           </p>
         </div>
-        <div className="space-y-2">
-          <ToggleRow
-            title="Due soon reminders"
-            description={
-              preferences.dueSoonRemindersEnabled
-                ? `${preferences.dueSoonHoursBefore ?? 0} hours before due dates`
-                : "Off — toggle to get reminded before deadlines"
-            }
-            enabled={preferences.dueSoonRemindersEnabled}
-            onToggle={() => toggle("dueSoonRemindersEnabled")}
-          />
-          <label className="block rounded-xl border border-border bg-background px-4 py-3">
-            <span className="mb-1.5 block text-xs font-medium text-muted">Hours before due date</span>
-            <input
-              type="number"
-              min={0}
-              max={168}
-              step={1}
-              value={preferences.dueSoonHoursBefore ?? 6}
-              disabled={loading || savingKey === "dueSoonHoursBefore"}
-              onChange={(event) =>
-                void save(
-                  { dueSoonHoursBefore: Number(event.target.value) || 0 },
-                  "dueSoonHoursBefore",
-                )
-              }
-              className="w-full bg-transparent text-sm text-foreground outline-none"
-            />
-          </label>
+        <ReminderSettingsCard />
+      </section>
+
+      <section>
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-foreground">Delivery preferences</h2>
+          <p className="mt-1 text-sm text-muted">
+            Choose how your assistant reaches you. To control which reminders run and when, visit Automations.
+          </p>
+        </div>
+        <ReminderDeliveryCard />
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-5">
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted">Current setup</p>
+        <div className="mt-3 space-y-2 text-sm text-muted">
+          <p>
+            Delivery channel:{" "}
+            <span className="font-medium text-foreground">
+              {preferences.deliveryChannel === "sms" ? "SMS" : "In-app"}
+            </span>
+          </p>
+          <p>
+            Existing summary and due-soon defaults are still stored for compatibility, but new or
+            customized reminder rules should be managed from{" "}
+            <Link href="/automations" className="font-medium text-accent-green-foreground underline underline-offset-2">
+              Automations
+            </Link>.
+          </p>
         </div>
       </section>
 
-      {saveError && (
-        <section className="rounded-2xl border border-accent-rose bg-accent-rose px-5 py-4 text-sm text-accent-rose-foreground">
-          {saveError}
-        </section>
-      )}
-
-      <ReminderDeliveryCard />
-
-      {/* Delivery note */}
       <section className="rounded-2xl border border-dashed border-border bg-surface/50 p-5">
-        <p className="text-xs font-semibold uppercase tracking-widest text-muted">Delivery</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted">Why the split</p>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          Email and push notification support are still coming soon. You can also ask the
-          assistant to create custom automations from the{" "}
-          <a href="/automations" className="font-medium text-accent-green-foreground underline underline-offset-2">
-            Automations
-          </a>{" "}
-          page.
+          Settings is now for simple preferences like delivery and messaging. Automations is where
+          recurring reminder rules, summaries, and assistant-created reminders belong. Activities
+          and Events is where you tell the assistant about practices, appointments, shifts, and
+          other real-world commitments.
         </p>
       </section>
     </div>
@@ -589,7 +450,7 @@ function ProfileTab() {
               }`}
             >
               {profile.assistantTone === opt.value && (
-                <span className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-[#0f2117]">
+                <span className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-hero">
                   ✓
                 </span>
               )}
@@ -627,7 +488,7 @@ function ProfileTab() {
               }`}
             >
               {(profile.aiModel ?? "balanced") === opt.value && (
-                <span className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-[#0f2117]">
+                <span className="absolute right-3 top-3 flex h-4 w-4 items-center justify-center rounded-full bg-sidebar-accent text-[9px] font-bold text-hero">
                   ✓
                 </span>
               )}
@@ -715,7 +576,13 @@ function ProfileTab() {
 // ── Schedule tab ──────────────────────────────────────────────────────────────
 
 function ScheduleTab() {
-  const { classes, loading, addClass, addClasses, updateClass, deleteClass } = useClasses();
+  const { classes, loading, addClass, importSchedule, updateClass, deleteClass } = useClasses();
+  const {
+    scheduleArchitecture,
+    setScheduleArchitecture,
+    rotationLabels,
+    isRotationSchedule,
+  } = useScheduleConfig();
 
   const [setupVisible, setSetupVisible] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
@@ -734,12 +601,23 @@ function ScheduleTab() {
   const [notes, setNotes] = useState("");
   const [syllabusText, setSyllabusText] = useState("");
   const [classNotes, setClassNotes] = useState("");
-  const [color, setColor] = useState(COLOR_SWATCHES[0].value);
-  const [rotationOption, setRotationOption] = useState<RotationOption>("");
+  const [color, setColor] = useState(DEFAULT_CLASS_COLOR);
+  const [selectedRotationDays, setSelectedRotationDays] = useState<RotationDay[]>([]);
+  const [rotationLabelsInput, setRotationLabelsInput] = useState(rotationLabels.join(", "));
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const inputClass =
     "w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40";
+
+  useEffect(() => {
+    setRotationLabelsInput(rotationLabels.join(", "));
+  }, [rotationLabels]);
+
+  const toggleRotationDay = (label: RotationDay) => {
+    setSelectedRotationDays((prev) =>
+      prev.includes(label) ? prev.filter((value) => value !== label) : [...prev, label],
+    );
+  };
 
   const toggleDay = (day: Weekday) => {
     setDays((prev) => {
@@ -776,8 +654,8 @@ function ScheduleTab() {
     setNotes("");
     setSyllabusText("");
     setClassNotes("");
-    setColor(COLOR_SWATCHES[0].value);
-    setRotationOption("");
+    setColor(DEFAULT_CLASS_COLOR);
+    setSelectedRotationDays([]);
     setValidationError(null);
     setMutationError(null);
     setEditingClassId(null);
@@ -791,8 +669,8 @@ function ScheduleTab() {
     setNotes(cls.notes ?? "");
     setSyllabusText(cls.syllabusText ?? "");
     setClassNotes(cls.classNotes ?? "");
-    setColor(cls.color ?? COLOR_SWATCHES[0].value);
-    setRotationOption(getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel));
+    setColor(resolveClassColor(cls.color));
+    setSelectedRotationDays(getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel));
     if (cls.meetings && cls.meetings.length > 0) {
       setDays(cls.meetings.map((m) => m.day));
       setUsePerDayTimes(true);
@@ -849,7 +727,7 @@ function ScheduleTab() {
 
     try {
       const apInfo = detectApCourse(name.trim());
-      const rotationDays = rotationSelectionToDays(rotationOption);
+      const rotationDays = isRotationSchedule ? rotationSelectionToDays(selectedRotationDays) : [];
       const classData = {
         name: name.trim(),
         teacherName: teacherName.trim() || undefined,
@@ -862,9 +740,9 @@ function ScheduleTab() {
         notes: notes.trim() || undefined,
         syllabusText: syllabusText.trim() || undefined,
         classNotes: classNotes.trim() || undefined,
-        color,
-        rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
-        scheduleLabel: deriveScheduleLabel(rotationDays),
+        color: resolveClassColor(color),
+        rotationDays: isRotationSchedule && rotationDays.length > 0 ? rotationDays : undefined,
+        scheduleLabel: isRotationSchedule ? deriveScheduleLabel(rotationDays) : undefined,
         isApCourse: apInfo.isApCourse || undefined,
         apCourseKey: apInfo.apCourseKey ?? undefined,
       };
@@ -883,21 +761,108 @@ function ScheduleTab() {
   };
 
   const handleSchedulesConfirmed = async (newClasses: Array<Omit<SchoolClass, "id">>) => {
-    await addClasses(newClasses);
+    await importSchedule(newClasses);
     setSetupVisible(false);
+  };
+
+  const handleRotationArchitectureSave = () => {
+    const nextLabels = normalizeRotationLabels(
+      rotationLabelsInput.split(",").map((label) => label.trim()),
+    );
+    setScheduleArchitecture({ type: "rotation", rotationLabels: nextLabels });
+    setRotationLabelsInput(nextLabels.join(", "));
+    setSelectedRotationDays((prev) => prev.filter((label) => nextLabels.includes(label)));
   };
 
   const hasClasses = classes.length > 0;
 
   return (
     <div className="space-y-8">
+      <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+        <div>
+          <h2 className="text-base font-semibold text-foreground">Schedule architecture</h2>
+          <p className="mt-1 text-sm text-muted">
+            Choose how your school schedule is organized so the app and assistant interpret classes correctly.
+          </p>
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setScheduleArchitecture({ type: "weekday" })}
+            className={`rounded-2xl border p-4 text-left transition ${
+              !isRotationSchedule
+                ? "border-accent-green-foreground/40 bg-accent-green/10"
+                : "border-border bg-background hover:bg-surface"
+            }`}
+          >
+            <p className="text-sm font-semibold text-foreground">Weekday-based</p>
+            <p className="mt-1 text-xs text-muted">
+              Classes are driven by weekdays like Mon/Wed/Fri or Tue/Thu.
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setScheduleArchitecture({ type: "rotation", rotationLabels })}
+            className={`rounded-2xl border p-4 text-left transition ${
+              isRotationSchedule
+                ? "border-accent-green-foreground/40 bg-accent-green/10"
+                : "border-border bg-background hover:bg-surface"
+            }`}
+          >
+            <p className="text-sm font-semibold text-foreground">Rotation-based</p>
+            <p className="mt-1 text-xs text-muted">
+              Classes can belong to rotating day labels like {rotationLabels.join("/")}.
+            </p>
+          </button>
+        </div>
+
+        {isRotationSchedule && (
+          <div className="mt-5 rounded-2xl border border-border bg-background p-4">
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-foreground">Rotation day labels</span>
+              <input
+                type="text"
+                value={rotationLabelsInput}
+                onChange={(e) => setRotationLabelsInput(e.target.value)}
+                placeholder="A, B, C, D"
+                className={inputClass}
+              />
+            </label>
+            <p className="mt-2 text-xs text-muted">
+              Use a short comma-separated list like <span className="font-medium text-foreground">A, B</span> or{" "}
+              <span className="font-medium text-foreground">A, B, C, D, E, F</span>.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {getRotationLabelsForArchitecture(scheduleArchitecture).map((label) => (
+                <span
+                  key={label}
+                  className="rounded-full border border-accent-green-foreground/20 bg-accent-green/10 px-3 py-1 text-xs font-medium text-accent-green-foreground"
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={handleRotationArchitectureSave}
+                className="rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition hover:bg-surface"
+              >
+                Save rotation labels
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
       {/* AI setup section */}
       {!setupVisible && !formOpen && (
         <section>
           <div className="mb-4">
             <h2 className="text-base font-semibold text-foreground">Build from description</h2>
             <p className="mt-1 text-sm text-muted">
-              Describe your schedule in plain English and the assistant will set it up for you.
+              Describe your schedule in plain English and the assistant will interpret it using your selected architecture.
             </p>
           </div>
           <button
@@ -915,11 +880,12 @@ function ScheduleTab() {
           <div>
             <p className="text-base font-semibold text-foreground">Describe your full schedule</p>
             <p className="mt-1 text-sm text-muted">
-              Paste or type your classes in plain English — include times, days, and A/B rotation if your school uses it.
+              Paste or type your classes in plain English — include times, weekdays, and rotation labels when relevant.
             </p>
           </div>
           <ScheduleSetupInput
             existingClasses={classes}
+            scheduleArchitecture={scheduleArchitecture}
             onConfirmed={handleSchedulesConfirmed}
             onCancel={() => setSetupVisible(false)}
           />
@@ -1147,61 +1113,49 @@ function ScheduleTab() {
               />
             </label>
 
-            <fieldset>
-              <legend className="mb-2 text-sm font-medium text-foreground">Color</legend>
-              <div className="flex flex-wrap gap-2">
-                {COLOR_SWATCHES.map((swatch) => (
-                  <button
-                    key={swatch.value}
-                    type="button"
-                    title={swatch.label}
-                    onClick={() => setColor(swatch.value)}
-                    style={{ backgroundColor: swatch.value }}
-                    className={`h-8 w-8 rounded-full border-2 transition ${
-                      color === swatch.value
-                        ? "scale-110 border-foreground"
-                        : "border-transparent hover:border-muted"
-                    }`}
-                  />
-                ))}
-              </div>
-            </fieldset>
+            <ClassColorField
+              value={color}
+              onChange={setColor}
+              helperText="Choose from a larger palette, use the browser picker, or paste a custom hex. Every class color saves as normalized hex."
+            />
 
-            <fieldset>
-              <legend className="mb-2 text-sm font-medium text-foreground">
-                Rotating schedule <span className="text-xs font-normal text-muted">(optional)</span>
-              </legend>
-              <p className="mb-2.5 text-xs text-muted">
-                If your school uses A/B day rotation, mark whether this class is on A-day, B-day, or both.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {(["", "A", "B", "AB"] as RotationOption[]).map((value) => (
-                  <label
-                    key={value === "" ? "none" : value}
-                    className={`flex cursor-pointer select-none items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
-                      rotationOption === value
-                        ? value === "A"
-                          ? "border-accent-blue-foreground bg-accent-blue font-medium text-accent-blue-foreground"
-                          : value === "B"
-                            ? "border-accent-purple-foreground bg-accent-purple font-medium text-accent-purple-foreground"
-                            : value === "AB"
-                              ? "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
-                            : "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
+            {isRotationSchedule && (
+              <fieldset>
+                <legend className="mb-2 text-sm font-medium text-foreground">
+                  Rotating schedule <span className="text-xs font-normal text-muted">(optional)</span>
+                </legend>
+                <p className="mb-2.5 text-xs text-muted">
+                  Mark which rotation labels this class belongs to. Leave everything off for a weekday-only class.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRotationDays([])}
+                    className={`rounded-full border px-3 py-1.5 text-sm transition ${
+                      selectedRotationDays.length === 0
+                        ? "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
                         : "border-border bg-card text-muted hover:bg-surface"
                     }`}
                   >
-                    <input
-                      type="radio"
-                      name="rotationOption"
-                      className="sr-only"
-                      checked={rotationOption === value}
-                      onChange={() => setRotationOption(value)}
-                    />
-                    {value === "" ? "No rotation" : value === "AB" ? "A + B" : `${value}-Day`}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
+                    No rotation
+                  </button>
+                  {rotationLabels.map((label) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => toggleRotationDay(label)}
+                      className={`rounded-full border px-3 py-1.5 text-sm transition ${
+                        selectedRotationDays.includes(label)
+                          ? "border-accent-green-foreground bg-accent-green font-medium text-accent-green-foreground"
+                          : "border-border bg-card text-muted hover:bg-surface"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            )}
 
             {/* ── Class knowledge ────────────────────────────────────────── */}
             <div className="space-y-3 rounded-xl border border-border bg-surface/50 p-4">
@@ -1294,9 +1248,9 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       {/* Page header */}
-      <div className="border-b border-border bg-card px-6 py-8 md:px-10">
+      <div className="border-b border-border bg-card px-4 py-6 sm:px-6 sm:py-8 md:px-10">
         <div className="mx-auto max-w-2xl">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[15px] leading-none opacity-70">⚙</span>
@@ -1312,21 +1266,21 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="border-b border-border bg-card px-6 md:px-10">
+      <div className="border-b border-border bg-card px-4 sm:px-6 md:px-10">
         <div className="mx-auto max-w-2xl">
-          <div className="flex gap-0 overflow-x-auto">
+          <div className="flex gap-0 overflow-x-auto [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`relative flex shrink-0 items-center gap-2 px-1 py-3.5 mr-6 text-sm font-medium transition-colors ${
+                className={`relative flex shrink-0 items-center gap-1.5 px-1 py-3.5 mr-4 sm:mr-6 text-sm font-medium transition-colors ${
                   activeTab === tab.id
                     ? "text-foreground"
                     : "text-muted hover:text-foreground"
                 }`}
               >
-                <span className="text-base leading-none opacity-70">{tab.icon}</span>
+                <span className="hidden text-base leading-none opacity-70 sm:inline">{tab.icon}</span>
                 {tab.label}
                 {activeTab === tab.id && (
                   <span className="absolute bottom-0 left-0 right-0 h-[2px] rounded-t-full bg-sidebar-accent" />
@@ -1338,7 +1292,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab content */}
-      <div className="mx-auto max-w-2xl px-6 py-8 md:px-10">
+      <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-8 md:px-10">
         {activeTab === "appearance"    && <AppearanceTab />}
         {activeTab === "messaging"     && <MessagingSettingsCard />}
         {activeTab === "notifications" && <NotificationsTab />}

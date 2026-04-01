@@ -127,7 +127,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex min-h-dvh flex-col bg-background overflow-y-auto">
       <div className="bg-hero px-8 py-12">
         <div className="mx-auto max-w-sm">
           <div className="flex items-center gap-2.5">
@@ -150,16 +150,16 @@ export default function LoginPage() {
       <div className="flex flex-1 items-start justify-center px-8 py-8">
         <div className="w-full max-w-sm">
           {!supabaseReady && (
-            <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <div className="mb-6 rounded-xl border border-accent-amber bg-accent-amber/40 px-4 py-3 text-sm text-accent-amber-foreground">
               <p className="font-semibold">Supabase not configured</p>
-              <p className="mt-1 text-amber-700">
+              <p className="mt-1 opacity-80">
                 Add these two lines to <code className="font-mono">.env.local</code>, then restart the dev server:
               </p>
-              <pre className="mt-2 overflow-x-auto rounded bg-amber-100 px-3 py-2 text-xs leading-relaxed text-amber-900">
+              <pre className="mt-2 overflow-x-auto rounded bg-accent-amber/50 px-3 py-2 text-xs leading-relaxed">
 {`NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
               </pre>
-              <p className="mt-2 text-xs text-amber-700">
+              <p className="mt-2 text-xs opacity-70">
                 Get these from your Supabase project {"->"} Settings {"->"} API.
               </p>
             </div>
@@ -171,7 +171,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
                 key={m}
                 type="button"
                 onClick={() => switchMode(m)}
-                className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
+                className={`flex-1 rounded-lg py-2.5 text-sm font-medium transition-colors ${
                   mode === m
                     ? "bg-sidebar text-white shadow-sm"
                     : "text-muted hover:text-foreground"
@@ -189,7 +189,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
           )}
 
           {error && (
-            <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div className="mb-4 rounded-lg border border-accent-rose bg-accent-rose/40 px-4 py-3 text-sm text-accent-rose-foreground">
               {error}
             </div>
           )}
@@ -250,6 +250,20 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key`}
               {mode === "login" ? "Sign up free" : "Log in"}
             </button>
           </p>
+
+          {supabaseReady && (
+            <div className="mt-6 border-t border-border pt-5">
+              <p className="mb-2 text-center text-xs text-muted/50">Beta testing</p>
+              <button
+                type="button"
+                onClick={() => void handleTestLogin()}
+                disabled={testLoading || loading}
+                className="w-full rounded-xl border border-border bg-surface py-2.5 text-sm font-medium text-muted transition hover:bg-card hover:text-foreground disabled:opacity-50"
+              >
+                {testLoading ? "Signing in..." : "Sign in with test account"}
+              </button>
+            </div>
+          )}
 
         </div>
       </div>

@@ -1,11 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useCalendar } from "../../lib/stores/calendarStore";
+import { useScheduleConfig } from "../../lib/stores/scheduleConfig";
 import { getTodayDateString } from "../../lib/schedule";
 import type { SchoolCalendarEntry, SchoolDayCategory } from "../../types";
-
-type AbOption = "A" | "B" | "";
 
 const CATEGORIES: {
   value: SchoolDayCategory;
@@ -55,7 +55,6 @@ const CATEGORY_BADGE: Record<
 };
 
 function formatDisplayDate(dateStr: string): string {
-  // Parse as local date to avoid UTC offset issues
   const [y, m, d] = dateStr.split("-").map(Number);
   const date = new Date(y, m - 1, d);
   return date.toLocaleDateString("en-US", {
@@ -68,13 +67,14 @@ function formatDisplayDate(dateStr: string): string {
 
 export default function CalendarPage() {
   const { entries, addEntry, removeEntry } = useCalendar();
+  const { isRotationSchedule, rotationLabels } = useScheduleConfig();
 
   const today = getTodayDateString();
 
   const [date, setDate] = useState(today);
   const [category, setCategory] = useState<SchoolDayCategory | "">("");
   const [label, setLabel] = useState("");
-  const [abOverride, setAbOverride] = useState<AbOption>("");
+  const [abOverride, setAbOverride] = useState("");
   const [showAbOverride, setShowAbOverride] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,14 +90,16 @@ export default function CalendarPage() {
       setError("Please choose a day type.");
       return;
     }
+
     setError(null);
     addEntry({
       date,
       category,
       label: label.trim() || undefined,
-      abOverride: abOverride || undefined,
+      scheduleDayOverride: abOverride || undefined,
+      abOverride: abOverride === "A" || abOverride === "B" ? abOverride : undefined,
     });
-    // Reset form
+
     setDate(today);
     setCategory("");
     setLabel("");
@@ -106,12 +108,11 @@ export default function CalendarPage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col">
-      {/* ── Dark hero ──────────────────────────────────────────── */}
+    <main className="flex min-h-dvh flex-col">
       <div className="bg-hero px-8 py-10 md:py-12">
         <div className="mx-auto max-w-4xl">
           <p className="text-[13px] font-medium text-sidebar-text">Personalize your assistant</p>
-          <h1 className="mt-1.5 text-[2rem] font-bold tracking-tight text-white leading-tight">
+          <h1 className="mt-1.5 text-[2rem] font-bold leading-tight tracking-tight text-white">
             School Calendar
           </h1>
           <p className="mt-2 max-w-xl text-sm text-white/50">
@@ -121,10 +122,18 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {/* ── Content ─────────────────────────────────────────────── */}
       <div className="mx-auto w-full max-w-4xl flex-1 space-y-8 px-8 py-8">
+        <section className="rounded-2xl border border-border bg-surface/50 p-4">
+          <p className="text-sm font-semibold text-foreground">Use this for school-wide schedule changes</p>
+          <p className="mt-1 text-xs text-muted">
+            Holidays, no-school days, teacher workdays, and special schedules belong here.
+            Personal plans like practices, appointments, and one-off commitments belong in{" "}
+            <Link href="/activities" className="font-medium text-accent-green-foreground underline underline-offset-2">
+              Activities &amp; Events
+            </Link>.
+          </p>
+        </section>
 
-        {/* ── Add entry form ──────────────────────────────────── */}
         <section className="rounded-2xl border border-border bg-card p-6 shadow-sm">
           <h2 className="text-base font-semibold text-foreground">Add a special day</h2>
           <p className="mt-0.5 text-sm text-muted">
@@ -132,7 +141,6 @@ export default function CalendarPage() {
           </p>
 
           <div className="mt-5 space-y-5">
-            {/* Date */}
             <div>
               <label className="mb-1.5 block text-sm font-medium text-foreground">Date</label>
               <input
@@ -143,7 +151,6 @@ export default function CalendarPage() {
               />
             </div>
 
-            {/* Category */}
             <div>
               <label className="mb-2 block text-sm font-medium text-foreground">Day type</label>
               <div className="flex flex-wrap gap-2">
@@ -152,7 +159,7 @@ export default function CalendarPage() {
                     key={cat.value}
                     type="button"
                     onClick={() => setCategory(cat.value)}
-                    className={`rounded-full border px-4 py-1.5 text-sm transition select-none ${
+                    className={`select-none rounded-full border px-4 py-1.5 text-sm transition ${
                       category === cat.value ? cat.activeColor : cat.color
                     }`}
                   >
@@ -167,11 +174,9 @@ export default function CalendarPage() {
               )}
             </div>
 
-            {/* Optional label */}
             <div>
               <label className="mb-1.5 block text-sm font-medium text-foreground">
-                Label{" "}
-                <span className="text-xs font-normal text-muted">(optional)</span>
+                Label <span className="text-xs font-normal text-muted">(optional)</span>
               </label>
               <input
                 type="text"
@@ -182,35 +187,37 @@ export default function CalendarPage() {
               />
             </div>
 
-            {/* A/B override — only relevant for special/modified days */}
-            <div>
+            {isRotationSchedule && (
+              <div>
               <button
                 type="button"
-                onClick={() => setShowAbOverride((v) => !v)}
-                className="text-sm text-muted underline underline-offset-2 hover:text-foreground transition-colors"
+                onClick={() => setShowAbOverride((value) => !value)}
+                className="text-sm text-muted underline underline-offset-2 transition-colors hover:text-foreground"
               >
-                {showAbOverride ? "Hide A/B override ↑" : "Set A/B day override (optional) ↓"}
+                {showAbOverride ? "Hide rotation override ↑" : "Set rotation-day override (optional) ↓"}
               </button>
 
               {showAbOverride && (
                 <div className="mt-3 space-y-2">
                   <p className="text-xs text-muted">
-                    If your school uses A/B rotation and this day has a specific rotation, choose
-                    it here. The assistant will use this instead of the manual selector.
+                    If this special day has a specific rotation label, choose it here. The assistant
+                    will use this instead of the manual selector.
                   </p>
                   <div className="flex gap-2">
-                    {(["", "A", "B"] as AbOption[]).map((opt) => (
+                    {["", ...rotationLabels].map((opt) => (
                       <button
                         key={opt === "" ? "none" : opt}
                         type="button"
                         onClick={() => setAbOverride(opt)}
-                        className={`rounded-full border px-3 py-1.5 text-sm transition select-none ${
+                        className={`select-none rounded-full border px-3 py-1.5 text-sm transition ${
                           abOverride === opt
                             ? opt === "A"
                               ? "border-accent-blue-foreground/40 bg-accent-blue font-semibold text-accent-blue-foreground"
                               : opt === "B"
-                              ? "border-accent-purple-foreground/40 bg-accent-purple font-semibold text-accent-purple-foreground"
-                              : "border-accent-green-foreground/40 bg-accent-green font-semibold text-accent-green-foreground"
+                                ? "border-accent-purple-foreground/40 bg-accent-purple font-semibold text-accent-purple-foreground"
+                                : opt
+                                  ? "border-accent-green-foreground/40 bg-accent-green font-semibold text-accent-green-foreground"
+                                  : "border-accent-green-foreground/40 bg-accent-green font-semibold text-accent-green-foreground"
                             : "border-border bg-card text-muted hover:bg-surface"
                         }`}
                       >
@@ -220,7 +227,8 @@ export default function CalendarPage() {
                   </div>
                 </div>
               )}
-            </div>
+              </div>
+            )}
 
             {error && (
               <p className="rounded-xl border border-accent-rose bg-accent-rose px-4 py-2.5 text-sm text-accent-rose-foreground">
@@ -239,7 +247,6 @@ export default function CalendarPage() {
           </div>
         </section>
 
-        {/* ── Upcoming special days ────────────────────────────── */}
         <section>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted">
             Upcoming Special Days
@@ -268,7 +275,6 @@ export default function CalendarPage() {
           )}
         </section>
 
-        {/* ── Past special days ────────────────────────────────── */}
         {pastEntries.length > 0 && (
           <section>
             <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted">
@@ -304,7 +310,6 @@ function EntryRow({
 
   return (
     <div className="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
-      {/* Date */}
       <div className="min-w-[130px] shrink-0">
         <p className="text-sm font-medium text-foreground">
           {formatDisplayDate(entry.date)}
@@ -316,31 +321,30 @@ function EntryRow({
         </p>
       </div>
 
-      {/* Category badge */}
       <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${badge.className}`}>
         {badge.label}
       </span>
 
-      {/* Label */}
-      {entry.label && (
+      {entry.label ? (
         <p className="flex-1 truncate text-sm text-muted">{entry.label}</p>
+      ) : (
+        <div className="flex-1" />
       )}
-      {!entry.label && <div className="flex-1" />}
 
-      {/* A/B override badge */}
-      {entry.abOverride && (
+      {(entry.scheduleDayOverride ?? entry.abOverride) && (
         <span
           className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-            entry.abOverride === "A"
+            (entry.scheduleDayOverride ?? entry.abOverride) === "A"
               ? "bg-accent-blue text-accent-blue-foreground"
-              : "bg-accent-purple text-accent-purple-foreground"
+              : (entry.scheduleDayOverride ?? entry.abOverride) === "B"
+                ? "bg-accent-purple text-accent-purple-foreground"
+                : "bg-accent-green text-accent-green-foreground"
           }`}
         >
-          {entry.abOverride}-Day
+          {entry.scheduleDayOverride ?? entry.abOverride}-Day
         </span>
       )}
 
-      {/* Delete */}
       <button
         type="button"
         onClick={onDelete}

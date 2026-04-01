@@ -4,13 +4,15 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatDueDate } from "../lib/datetime";
 import { useBrowserVoiceInput } from "../lib/voice";
+import { resolveClassColor } from "../lib/class-colors";
 import { useCalendar } from "../lib/stores/calendarStore";
 import { useScheduleConfig } from "../lib/stores/scheduleConfig";
-import { getAbOverrideForDate, getTodayDateString } from "../lib/schedule";
+import { getScheduleDayOverrideForDate, getTodayDateString } from "../lib/schedule";
 import { deriveScheduleLabel, getRotationSelectionValue, rotationSelectionToDays } from "../lib/class-rotation";
 import type {
   ChatMessage,
   ReminderPreference,
+  RotationDay,
   SchoolClass,
   StudentTask,
   Weekday,
@@ -46,7 +48,7 @@ type AssistantInputProps = {
     reminderAt?: string;
     source?: StudentTask["source"];
   }) => Promise<unknown>;
-  onSchedulesConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => Promise<void> | void;
+  onSchedulesConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => Promise<unknown> | void;
   placeholder?: string;
 };
 
@@ -75,7 +77,7 @@ export function AssistantInput({
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
   const [lastTranscript, setLastTranscript] = useState<string | null>(null);
 
-  const { todayDayType } = useScheduleConfig();
+  const { todayDayType, scheduleArchitecture, rotationLabels, isRotationSchedule } = useScheduleConfig();
   const { entries: calendarEntries } = useCalendar();
   const {
     state: voiceState,
@@ -85,6 +87,7 @@ export function AssistantInput({
     isTranscribing,
     start: startListening,
     stop: stopListening,
+    cancel: cancelListening,
     clearError: clearVoiceError,
   } = useBrowserVoiceInput((transcript) => {
     setLastTranscript(transcript);
@@ -96,7 +99,7 @@ export function AssistantInput({
     const trimmed = input.trim();
     if (!trimmed) return;
 
-    stopListening();
+    cancelListening();
     setStatus("loading");
     setTaskPreview(null);
     setErrorMessage(null);
@@ -104,7 +107,7 @@ export function AssistantInput({
 
     try {
       const todayDateStr = getTodayDateString();
-      const calendarAbOverride = getAbOverrideForDate(calendarEntries, todayDateStr);
+      const calendarAbOverride = getScheduleDayOverrideForDate(calendarEntries, todayDateStr);
       const effectiveDayType = calendarAbOverride ?? todayDayType;
 
       const res = await fetch("/api/ai/assistant", {
@@ -117,6 +120,7 @@ export function AssistantInput({
           reminderPreferences,
           effectiveDayType,
           calendarEntries,
+          scheduleArchitecture,
         }),
       });
 
@@ -129,7 +133,11 @@ export function AssistantInput({
       if (json.intent === "setup_schedule") {
         if (json.classes.length === 0) {
           setErrorMessage(
-            'Couldn\'t parse any classes from that description. Try being more specific, for example: "English A-day 8-9:15, Math Mon/Wed/Fri 1-1:50."',
+            `Couldn't parse any classes from that description. Try being more specific, for example: "${
+              isRotationSchedule
+                ? `English ${rotationLabels[0]}-Day 8-9:15, Math Mon/Wed/Fri 1-1:50`
+                : "English Tue/Thu 8-9:15, Math Mon/Wed/Fri 1-1:50"
+            }."`,
           );
           setStatus("error");
         } else {
@@ -193,6 +201,10 @@ export function AssistantInput({
     }
   };
 
+  const scheduleReviewSummary = editableSchedule
+    ? summarizeScheduleReview(editableSchedule)
+    : null;
+
   const handleCancelSchedule = () => {
     setEditableSchedule(null);
     setStatus("idle");
@@ -224,14 +236,32 @@ export function AssistantInput({
 
   const isSubmitting = status === "loading";
   const voiceStatusText = isListening
-    ? "Listening - speak now"
+    ? "Listening. Tap again when you're done."
     : isTranscribing
-      ? "Transcribing your speech..."
+      ? "Finishing that voice note..."
       : voiceState === "error"
         ? voiceError
         : voiceSupported
-          ? "Use the mic to speak, then edit the transcript if needed."
+          ? "Use the mic for one short voice note, then edit before sending."
           : "Voice input is not supported in this browser.";
+
+  const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(event.target.value);
+    if (lastTranscript) {
+      setLastTranscript(null);
+    }
+  };
+
+  const handleVoiceToggle = () => {
+    if (isListening || isTranscribing) {
+      stopListening();
+      return;
+    }
+
+    setLastTranscript(null);
+    clearVoiceError();
+    startListening();
+  };
 
   return (
     <div className="space-y-3">
@@ -258,16 +288,25 @@ export function AssistantInput({
 
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 void handleSubmit(e as unknown as React.FormEvent);
               }
             }}
-            placeholder={placeholder ?? DEFAULT_PLACEHOLDER}
+            placeholder={
+              isListening
+                ? "Listening..."
+                : isTranscribing
+                  ? "Finishing your transcript..."
+                  : placeholder ?? DEFAULT_PLACEHOLDER
+            }
             rows={3}
             disabled={isSubmitting}
+            autoCapitalize="sentences"
+            autoCorrect="on"
+            spellCheck
             className="w-full resize-none rounded-2xl border border-white/20 bg-white/10 px-4 py-3.5 text-sm text-white placeholder:text-white/40 outline-none transition focus:border-white/40 focus:bg-white/15 focus:ring-2 focus:ring-white/10 disabled:opacity-60"
           />
 
@@ -275,16 +314,22 @@ export function AssistantInput({
             {voiceSupported && (
               <button
                 type="button"
-                onClick={isListening || isTranscribing ? stopListening : startListening}
+                onClick={handleVoiceToggle}
                 disabled={isSubmitting}
-                className={`flex h-10 w-10 items-center justify-center rounded-full border transition disabled:opacity-40 ${
-                  isListening || isTranscribing
-                    ? "border-red-300/40 bg-red-400/20 text-red-100"
-                    : "border-white/20 text-white/80 hover:bg-white/10"
+                aria-label={isListening ? "Stop recording" : "Start voice note"}
+                title={isListening ? "Tap to stop recording" : isTranscribing ? "Processing…" : "Record a voice note"}
+                className={`relative flex h-11 w-11 items-center justify-center rounded-full border transition-all disabled:opacity-40 ${
+                  isListening
+                    ? "border-red-300/50 bg-red-400/25 text-red-100 ring-2 ring-red-400/30"
+                    : isTranscribing
+                      ? "border-red-300/30 bg-red-400/15 text-red-200"
+                      : "border-white/20 text-white/80 hover:bg-white/10"
                 }`}
-                title={isListening || isTranscribing ? "Stop voice input" : "Speak to the assistant"}
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {isListening && (
+                  <span className="absolute inset-0 animate-pulse rounded-full bg-red-400/15" />
+                )}
+                <svg className="relative h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -298,14 +343,18 @@ export function AssistantInput({
             <button
               type="submit"
               disabled={isSubmitting || !input.trim()}
-              className="rounded-full bg-sidebar-accent px-5 py-2.5 text-sm font-semibold text-hero transition hover:opacity-90 disabled:opacity-40"
+              className="min-h-[44px] rounded-full bg-sidebar-accent px-5 py-2.5 text-sm font-semibold text-hero transition hover:opacity-90 disabled:opacity-40"
             >
               {isSubmitting ? "Thinking..." : "Send"}
             </button>
 
-            <p className={`text-xs ${voiceState === "error" ? "text-red-200" : "text-white/40"}`}>
-              {voiceStatusText}
-            </p>
+            {(isListening || isTranscribing || voiceState === "error") && (
+              <p className={`text-xs font-medium ${
+                voiceState === "error" ? "text-red-200" : isListening ? "text-red-300" : "text-white/60"
+              }`}>
+                {voiceStatusText}
+              </p>
+            )}
           </div>
         </form>
       )}
@@ -355,7 +404,7 @@ export function AssistantInput({
           {!taskPreview.dueAt && (
             <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3">
               <p className="text-sm text-amber-300">
-                No due date was found. Add one manually after confirming, or cancel and re-word with a date.
+                No due date was found. That&apos;s okay - you can confirm this task as-is or add a date later.
               </p>
             </div>
           )}
@@ -364,14 +413,14 @@ export function AssistantInput({
             <button
               type="button"
               onClick={() => void handleConfirmTask()}
-              className="rounded-full bg-sidebar-accent px-5 py-2.5 text-sm font-semibold text-hero transition hover:opacity-90"
+              className="min-h-[44px] rounded-full bg-sidebar-accent px-5 py-2.5 text-sm font-semibold text-hero transition hover:opacity-90"
             >
               Add task
             </button>
             <button
               type="button"
               onClick={handleCancelTask}
-              className="rounded-full border border-white/20 px-5 py-2.5 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
+              className="min-h-[44px] rounded-full border border-white/20 px-5 py-2.5 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
             >
               Cancel
             </button>
@@ -390,6 +439,12 @@ export function AssistantInput({
             </p>
           </div>
 
+          {scheduleReviewSummary && (
+            <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3">
+              <p className="text-sm text-amber-200">{scheduleReviewSummary}</p>
+            </div>
+          )}
+
           <div className="space-y-3">
             {editableSchedule.map((cls, i) => (
               <div
@@ -399,7 +454,7 @@ export function AssistantInput({
                 <div className="flex items-center gap-2">
                   <div
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: cls.color ?? "#d4edd9" }}
+                    style={{ backgroundColor: resolveClassColor(cls.color) }}
                   />
                   <input
                     type="text"
@@ -481,35 +536,57 @@ export function AssistantInput({
                   ))}
                 </div>
 
-                <div className="flex items-center gap-2 text-xs text-white/50">
-                  <span>Rotation</span>
-                  {(["", "A", "B", "AB"] as const).map((value) => (
-                    <button
-                      key={value || "none"}
-                      type="button"
-                      onClick={() => {
-                        const rotationDays = rotationSelectionToDays(value);
-                        updateEditableClass(i, {
-                          rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
-                          scheduleLabel: deriveScheduleLabel(rotationDays),
-                        });
-                      }}
-                      className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
-                        getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel) === value
-                          ? value === "A"
-                            ? "border border-blue-500/40 bg-blue-500/30 text-blue-300"
-                            : value === "B"
-                              ? "border border-purple-500/40 bg-purple-500/30 text-purple-300"
-                              : value === "AB"
+                {isRotationSchedule && (
+                  <div className="flex items-start gap-2 text-xs text-white/50">
+                    <span className="pt-1">Rotation</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateEditableClass(i, { rotationDays: undefined, scheduleLabel: undefined })
+                        }
+                        className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
+                          getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel).length === 0
+                            ? "border border-white/20 bg-white/10 text-white/70"
+                            : "border border-white/10 text-white/40 hover:border-white/25 hover:text-white/60"
+                        }`}
+                      >
+                        None
+                      </button>
+                      {rotationLabels.map((label) => {
+                        const selectedRotationDays = getRotationSelectionValue(
+                          cls.rotationDays,
+                          cls.scheduleLabel,
+                        );
+                        const selected = selectedRotationDays.includes(label);
+                        const nextRotationDays: RotationDay[] = selected
+                          ? selectedRotationDays.filter((value) => value !== label)
+                          : [...selectedRotationDays, label];
+
+                        return (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => {
+                              const rotationDays = rotationSelectionToDays(nextRotationDays);
+                              updateEditableClass(i, {
+                                rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
+                                scheduleLabel: deriveScheduleLabel(rotationDays),
+                              });
+                            }}
+                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
+                              selected
                                 ? "border border-emerald-500/40 bg-emerald-500/30 text-emerald-300"
-                                : "border border-white/20 bg-white/10 text-white/70"
-                          : "border border-white/10 text-white/40 hover:border-white/25 hover:text-white/60"
-                      }`}
-                    >
-                      {value === "" ? "None" : value === "AB" ? "A+B" : `${value}-Day`}
-                    </button>
-                  ))}
-                </div>
+                                : "border border-white/10 text-white/40 hover:border-white/25 hover:text-white/60"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -559,4 +636,31 @@ export function AssistantInput({
       )}
     </div>
   );
+}
+
+function summarizeScheduleReview(classes: Array<Omit<SchoolClass, "id">>) {
+  const missingTimeCount = classes.filter((schoolClass) =>
+    !schoolClass.startTime.trim() || !schoolClass.endTime.trim(),
+  ).length;
+  const missingPatternCount = classes.filter((schoolClass) =>
+    schoolClass.days.length === 0 && (schoolClass.rotationDays?.length ?? 0) === 0,
+  ).length;
+
+  const parts: string[] = [];
+  if (missingTimeCount > 0) {
+    parts.push(
+      `${missingTimeCount} ${missingTimeCount === 1 ? "class is" : "classes are"} missing a reliable time`,
+    );
+  }
+  if (missingPatternCount > 0) {
+    parts.push(
+      `${missingPatternCount} ${missingPatternCount === 1 ? "class is" : "classes are"} missing meeting days or rotation`,
+    );
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return `${parts.join(". ")}. You can still save, but those classes may not show up correctly in today’s schedule until you fill in the missing details.`;
 }

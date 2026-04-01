@@ -45,7 +45,7 @@ export function NavBar() {
                   className={`mx-1 flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-semibold transition-all ${
                     isActive
                       ? "bg-sidebar-accent/20 text-sidebar-accent ring-1 ring-sidebar-accent/30"
-                      : "bg-sidebar-accent/8 text-sidebar-accent/70 hover:bg-sidebar-accent/15 hover:text-sidebar-accent"
+                      : "bg-sidebar-accent/10 text-sidebar-accent/70 hover:bg-sidebar-accent/15 hover:text-sidebar-accent"
                   }`}
                 >
                   <span className="text-[11px]">{link.icon}</span>
@@ -70,19 +70,6 @@ export function NavBar() {
           })}
         </div>
 
-        {/* Dev link */}
-        <div>
-          <Link
-            href="/dev/parse-test"
-            className={`px-3 py-3 text-xs transition-colors ${
-              pathname.startsWith("/dev")
-                ? "font-medium text-foreground"
-                : "text-muted/40 hover:text-muted"
-            }`}
-          >
-            Dev
-          </Link>
-        </div>
       </div>
     </nav>
   );

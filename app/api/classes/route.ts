@@ -5,11 +5,13 @@ import {
   mapSchoolClassToUpdate,
   normalizeSchoolClassInput,
 } from "../../../lib/classes";
+import { saveParsedSchedule } from "../../../lib/assistant-action-executor";
 import { getAuthedSupabase } from "../../../lib/supabase/route-auth";
 import type { SchoolClass } from "../../../types";
 
 type CreateClassesRequest = {
   classes?: Array<Omit<SchoolClass, "id">>;
+  importMode?: "safe_schedule";
 };
 
 type UpdateClassRequest = {
@@ -52,6 +54,28 @@ export async function POST(request: Request) {
   }
 
   try {
+    if (body.importMode === "safe_schedule") {
+      const normalizedClasses = classes.map((schoolClass) =>
+        normalizeSchoolClassInput(schoolClass, { requireName: true }),
+      );
+      const result = await saveParsedSchedule({
+        supabase,
+        userId,
+        classes: normalizedClasses,
+      });
+
+      return NextResponse.json({
+        data: [...result.created, ...result.updated],
+        importSummary: {
+          created: result.created.length,
+          updated: result.updated.length,
+          skipped: result.skipped.length,
+          ambiguous: result.ambiguous.length,
+          partial: result.partial.length,
+        },
+      });
+    }
+
     const rows = classes.map((schoolClass) =>
       mapSchoolClassToInsert(normalizeSchoolClassInput(schoolClass, { requireName: true }), userId),
     );

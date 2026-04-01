@@ -3,11 +3,21 @@
 import { useState } from "react";
 import type { StudentTask } from "../types";
 
-type TaskInputBoxProps = {
-  onTaskAdded?: (task: StudentTask) => void;
+type TaskCreateInput = {
+  title: string;
+  description?: string;
+  classId?: string;
+  dueAt?: string;
+  type?: StudentTask["type"];
+  reminderAt?: string;
+  source?: StudentTask["source"];
+  status?: StudentTask["status"];
 };
 
-// TODO: Replace with Supabase-backed task persistence once auth is set up
+type TaskInputBoxProps = {
+  onTaskAdded?: (task: TaskCreateInput) => Promise<unknown>;
+};
+
 export function TaskInputBox({ onTaskAdded }: TaskInputBoxProps) {
   const [value, setValue] = useState("");
   const [status, setStatus] = useState<"idle" | "adding" | "success" | "error">("idle");
@@ -35,9 +45,7 @@ export function TaskInputBox({ onTaskAdded }: TaskInputBoxProps) {
       }
 
       const partial = json.data ?? {};
-      const now = new Date().toISOString();
-      const task: StudentTask = {
-        id: crypto.randomUUID(),
+      const taskInput: TaskCreateInput = {
         title: partial.title ?? trimmed,
         description: partial.description,
         classId: partial.classId,
@@ -46,11 +54,9 @@ export function TaskInputBox({ onTaskAdded }: TaskInputBoxProps) {
         reminderAt: partial.reminderAt,
         status: "todo",
         source: "ai-parsed",
-        createdAt: now,
-        updatedAt: now,
       };
 
-      onTaskAdded?.(task);
+      await onTaskAdded?.(taskInput);
       setValue("");
       setStatus("success");
       setTimeout(() => setStatus("idle"), 3000);

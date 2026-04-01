@@ -6,7 +6,11 @@ import type {
   TutoringContext,
   TutoringMode,
 } from "../types";
-import { normalizeExtractedText, retrieveRelevantMaterialExcerpts } from "./class-materials";
+import {
+  hasUsableMaterialText,
+  normalizeExtractedText,
+  retrieveRelevantMaterialExcerpts,
+} from "./class-materials";
 
 type TutoringPromptPolicy = {
   label: string;
@@ -59,6 +63,8 @@ const TUTORING_MODE_POLICIES: Record<TutoringMode, TutoringPromptPolicy> = {
     instructions: [
       "Help the student make progress without pretending to see information that is missing.",
       "Prefer hints, structure, and targeted explanation before full solutions when the request looks like active homework.",
+      "When an uploaded worksheet, screenshot, or class material is available, treat that as the primary grounding context before falling back to general knowledge.",
+      "Offer natural next-step options like explain, hint, check my work, or quiz me when that would help the student move forward.",
       "If the uploaded worksheet or screenshot is unreadable, say so plainly.",
     ],
   },
@@ -66,11 +72,15 @@ const TUTORING_MODE_POLICIES: Record<TutoringMode, TutoringPromptPolicy> = {
 
 export type TutoringContextAssembly = {
   tutoringSection: string;
+  groundingSection: string;
   materialSection: string;
   attachmentSection: string;
   taskSection: string;
   linkedClass: SchoolClass | null;
   linkedTask: StudentTask | null;
+  selectedMaterials: ClassMaterial[];
+  selectedAttachments: AssistantAttachment[];
+  groundingStatus: "uploaded_materials" | "class_materials" | "limited_materials" | "general_only";
 };
 
 export function buildTutoringContextSection(params: {
@@ -152,16 +162,24 @@ export function assembleTutoringContext(params: {
   const selectedMaterials = selectTutoringMaterials({
     linkedClass,
     tutoringContext,
+    linkedTask,
     message: params.message,
   });
   const selectedAttachments = selectTutoringAttachments({
     attachments: params.attachments,
     tutoringContext,
+    message: params.message,
   });
 
   const tutoringSection = buildTutoringContextSection({
     tutoringContext,
     classes: params.classes,
+  });
+  const groundingSection = buildTutoringGroundingSection({
+    linkedClass,
+    linkedTask,
+    selectedMaterials,
+    selectedAttachments,
   });
   const materialSection = formatSelectedMaterials(selectedMaterials);
   const attachmentSection = formatSelectedAttachments(selectedAttachments);
@@ -178,16 +196,21 @@ export function assembleTutoringContext(params: {
 
   return {
     tutoringSection,
+    groundingSection,
     materialSection,
     attachmentSection,
     taskSection,
     linkedClass,
     linkedTask,
+    selectedMaterials,
+    selectedAttachments,
+    groundingStatus: getTutoringGroundingStatus(selectedMaterials, selectedAttachments),
   };
 }
 
 function selectTutoringMaterials(params: {
   linkedClass: SchoolClass | null;
+  linkedTask: StudentTask | null;
   tutoringContext?: TutoringContext;
   message: string;
 }) {
@@ -202,6 +225,8 @@ function selectTutoringMaterials(params: {
   if (params.linkedClass) {
     const query = [
       params.message,
+      params.linkedTask?.title,
+      params.linkedTask?.description,
       params.tutoringContext?.topic,
       params.tutoringContext?.goal,
       params.tutoringContext?.studyFocus,
@@ -217,24 +242,33 @@ function selectTutoringMaterials(params: {
     const materialIds = new Set(retrieval.excerpts.map((excerpt) => excerpt.materialId));
     const matched = classMaterials.filter((material) => materialIds.has(material.id));
     if (matched.length > 0) {
-      return matched;
+      return prioritizeHomeworkHelpMaterials(matched, params.tutoringContext?.mode);
     }
   }
 
-  return classMaterials.slice(0, 3);
+  return prioritizeHomeworkHelpMaterials(classMaterials, params.tutoringContext?.mode).slice(0, 3);
 }
 
 function selectTutoringAttachments(params: {
   attachments: AssistantAttachment[];
   tutoringContext?: TutoringContext;
+  message: string;
 }) {
   if ((params.tutoringContext?.attachmentIds?.length ?? 0) > 0) {
-    return params.attachments.filter((attachment) =>
-      params.tutoringContext?.attachmentIds?.includes(attachment.id),
+    return prioritizeTutoringAttachments(
+      params.attachments.filter((attachment) =>
+        params.tutoringContext?.attachmentIds?.includes(attachment.id),
+      ),
+      params.tutoringContext?.mode,
+      params.message,
     );
   }
 
-  return params.attachments.slice(0, 3);
+  return prioritizeTutoringAttachments(
+    params.attachments,
+    params.tutoringContext?.mode,
+    params.message,
+  ).slice(0, 3);
 }
 
 function formatSelectedMaterials(materials: ClassMaterial[]) {
@@ -246,8 +280,13 @@ function formatSelectedMaterials(materials: ClassMaterial[]) {
     "Tutoring materials:",
     ...materials.map((material, index) => {
       const text = normalizeExtractedText(material.extractedText ?? material.rawText ?? "");
+      const status = text
+        ? "usable text available"
+        : material.extractionError
+          ? `unusable text (${material.extractionError})`
+          : "saved, but no usable text extracted";
       return [
-        `${index + 1}. ${material.title} [${material.kind}]`,
+        `${index + 1}. ${material.title} [${material.kind}] - ${status}`,
         text ? text.slice(0, 700) : "No usable text extracted from this material.",
       ].join("\n");
     }),
@@ -280,4 +319,172 @@ function formatSelectedAttachments(attachments: AssistantAttachment[]) {
           : `${parts}\nNo extracted text is currently available.`;
     }),
   ].join("\n\n");
+}
+
+function buildTutoringGroundingSection(params: {
+  linkedClass: SchoolClass | null;
+  linkedTask: StudentTask | null;
+  selectedMaterials: ClassMaterial[];
+  selectedAttachments: AssistantAttachment[];
+}) {
+  const groundingStatus = getTutoringGroundingStatus(
+    params.selectedMaterials,
+    params.selectedAttachments,
+  );
+  const usableMaterials = params.selectedMaterials.filter(hasUsableMaterialText);
+  const usableAttachments = params.selectedAttachments.filter(hasUsableAttachmentText);
+
+  const lines = ["Active tutoring grounding:"];
+  lines.push(
+    `- Linked class: ${params.linkedClass ? params.linkedClass.name : "none"}`,
+  );
+  lines.push(
+    `- Linked task: ${params.linkedTask ? params.linkedTask.title : "none"}`,
+  );
+  lines.push(
+    `- Selected class materials: ${summarizeItemList(params.selectedMaterials.map((material) => `${material.title}${hasUsableMaterialText(material) ? "" : " (saved, but no text)"}`))}`,
+  );
+  lines.push(
+    `- Selected session files: ${summarizeItemList(params.selectedAttachments.map((attachment) => `${attachment.title}${hasUsableAttachmentText(attachment) ? "" : " (not readable yet)"}`))}`,
+  );
+
+  if (usableAttachments.length > 0) {
+    lines.push(
+      "- Grounding strength: answer from the uploaded session files first, then use class materials only if they help.",
+    );
+  } else if (usableMaterials.length > 0) {
+    lines.push(
+      "- Grounding strength: answer from the saved class materials first, then use general knowledge only to fill obvious gaps.",
+    );
+  } else if (params.selectedAttachments.length > 0 || params.selectedMaterials.length > 0) {
+    lines.push(
+      "- Grounding strength: limited. Materials are linked, but they do not currently provide enough readable text to rely on heavily.",
+    );
+  } else {
+    lines.push(
+      "- Grounding strength: none. No relevant readable materials are active, so any academic help must be general unless the student shares more context.",
+    );
+  }
+
+  if (params.selectedAttachments.length + params.selectedMaterials.length > 1) {
+    lines.push(
+      "- If multiple files or materials could apply, name the specific file/material you are using. If the request is still ambiguous, ask which one the student means before pretending certainty.",
+    );
+  }
+
+  if (groundingStatus === "limited_materials" || groundingStatus === "general_only") {
+    lines.push(
+      "- If you do not have enough readable material to verify a class-specific claim, say that plainly and switch to general help, a clarifying question, or a request for a clearer excerpt/upload.",
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function getTutoringGroundingStatus(
+  materials: ClassMaterial[],
+  attachments: AssistantAttachment[],
+): "uploaded_materials" | "class_materials" | "limited_materials" | "general_only" {
+  if (attachments.some(hasUsableAttachmentText)) {
+    return "uploaded_materials";
+  }
+
+  if (materials.some(hasUsableMaterialText)) {
+    return "class_materials";
+  }
+
+  if (attachments.length > 0 || materials.length > 0) {
+    return "limited_materials";
+  }
+
+  return "general_only";
+}
+
+function hasUsableAttachmentText(attachment: AssistantAttachment) {
+  return Boolean(normalizeExtractedText(attachment.extractedText ?? ""));
+}
+
+function summarizeItemList(items: string[]) {
+  if (items.length === 0) return "none";
+  if (items.length <= 3) return items.join(", ");
+  return `${items.slice(0, 3).join(", ")}, +${items.length - 3} more`;
+}
+
+function prioritizeHomeworkHelpMaterials(
+  materials: ClassMaterial[],
+  mode?: TutoringMode,
+) {
+  if (mode !== "homework_help") {
+    return materials;
+  }
+
+  return [...materials].sort((first, second) => {
+    const firstScore = scoreHomeworkHelpLabel(first.title);
+    const secondScore = scoreHomeworkHelpLabel(second.title);
+    if (firstScore !== secondScore) {
+      return secondScore - firstScore;
+    }
+
+    return new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime();
+  });
+}
+
+function prioritizeTutoringAttachments(
+  attachments: AssistantAttachment[],
+  mode: TutoringMode | undefined,
+  message: string,
+) {
+  const lowerMessage = message.toLowerCase();
+
+  return [...attachments].sort((first, second) => {
+    const firstScore = scoreAttachment(first, mode, lowerMessage);
+    const secondScore = scoreAttachment(second, mode, lowerMessage);
+    if (firstScore !== secondScore) {
+      return secondScore - firstScore;
+    }
+
+    return new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime();
+  });
+}
+
+function scoreAttachment(
+  attachment: AssistantAttachment,
+  mode: TutoringMode | undefined,
+  lowerMessage: string,
+) {
+  let score = 0;
+
+  if (attachment.analysisStatus === "completed") score += 5;
+  if (attachment.attachmentType === "image") score += 2;
+  if (attachment.attachmentType === "document") score += 3;
+
+  if (mode === "homework_help") {
+    score += 4;
+    score += scoreHomeworkHelpLabel(
+      [attachment.title, attachment.fileName, attachment.mimeType].filter(Boolean).join(" "),
+    );
+  }
+
+  const extractedText = attachment.extractedText?.toLowerCase() ?? "";
+  if (extractedText && lowerMessage) {
+    for (const token of lowerMessage.split(/\W+/).filter((part) => part.length > 3)) {
+      if (extractedText.includes(token)) {
+        score += 1;
+      }
+    }
+  }
+
+  return score;
+}
+
+function scoreHomeworkHelpLabel(value: string) {
+  const lowerValue = value.toLowerCase();
+  let score = 0;
+  for (const keyword of ["worksheet", "homework", "problem", "assignment", "study guide", "guide", "review"]) {
+    if (lowerValue.includes(keyword)) {
+      score += 3;
+    }
+  }
+
+  return score;
 }

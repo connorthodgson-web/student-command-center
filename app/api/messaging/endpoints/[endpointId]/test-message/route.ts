@@ -13,6 +13,16 @@ export async function POST(
 
   try {
     const message = await sendTestMessageToEndpoint(auth.userId, endpointId);
+    if (message.deliveryStatus === "failed") {
+      return NextResponse.json(
+        {
+          data: message,
+          error: message.errorMessage ?? "Test message could not be delivered.",
+        },
+        { status: 409 },
+      );
+    }
+
     return NextResponse.json({ data: message }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to send test message.";

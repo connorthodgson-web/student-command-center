@@ -16,18 +16,32 @@ export type ProviderSendMessageInput = {
   toAddress: string;
   fromAddress?: string;
   content: string;
+  statusCallbackUrl?: string;
 };
 
 export type ProviderSendMessageResult = {
   providerMessageId?: string;
   deliveryStatus: "queued" | "sent" | "failed";
   errorMessage?: string;
+  rawStatus?: string;
+  shouldRetry?: boolean;
+};
+
+export type ProviderStatusUpdate = {
+  providerKey: string;
+  externalMessageId: string;
+  deliveryStatus: "queued" | "sent" | "delivered" | "failed";
+  errorMessage?: string;
+  rawStatus?: string;
+  occurredAt?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export interface MessagingProvider {
   key: string;
   channelType: MessagingChannelType;
   parseInboundRequest(request: Request): Promise<NormalizedInboundMessage>;
+  parseStatusCallback?(request: Request): Promise<ProviderStatusUpdate | null>;
   sendMessage(input: ProviderSendMessageInput): Promise<ProviderSendMessageResult>;
 }
 
@@ -72,6 +86,75 @@ async function parseTwilioInboundRequest(request: Request): Promise<NormalizedIn
   };
 }
 
+function mapTwilioMessageStatus(status: string | null | undefined) {
+  const normalized = status?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "queued":
+    case "accepted":
+    case "scheduled":
+      return "queued" as const;
+    case "sending":
+    case "sent":
+      return "sent" as const;
+    case "delivered":
+      return "delivered" as const;
+    case "undelivered":
+    case "failed":
+    case "canceled":
+      return "failed" as const;
+    default:
+      return null;
+  }
+}
+
+async function parseTwilioStatusCallback(request: Request): Promise<ProviderStatusUpdate | null> {
+  const bodyText = await request.text();
+  const params = new URLSearchParams(bodyText);
+
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const signature = request.headers.get("x-twilio-signature");
+  if (authToken && signature) {
+    const expected = crypto
+      .createHmac("sha1", authToken)
+      .update(parseTwilioSignaturePayload(request.url, params))
+      .digest("base64");
+
+    if (expected !== signature) {
+      throw new Error("Invalid Twilio signature.");
+    }
+  }
+
+  const externalMessageId = params.get("MessageSid")?.trim();
+  const rawStatus = params.get("MessageStatus")?.trim();
+  const deliveryStatus = mapTwilioMessageStatus(rawStatus);
+
+  if (!externalMessageId || !deliveryStatus) {
+    return null;
+  }
+
+  const errorCode = params.get("ErrorCode")?.trim();
+  const errorMessage = params.get("ErrorMessage")?.trim();
+
+  return {
+    providerKey: "twilio",
+    externalMessageId,
+    deliveryStatus,
+    errorMessage:
+      deliveryStatus === "failed"
+        ? errorMessage || (errorCode ? `Twilio error ${errorCode}.` : "Twilio reported a failed delivery.")
+        : undefined,
+    rawStatus: rawStatus ?? undefined,
+    occurredAt: new Date().toISOString(),
+    metadata: {
+      errorCode: errorCode || undefined,
+      smsStatus: params.get("SmsStatus") ?? undefined,
+      to: params.get("To") ?? undefined,
+      from: params.get("From") ?? undefined,
+    },
+  };
+}
+
 async function sendTwilioMessage(
   input: ProviderSendMessageInput,
 ): Promise<ProviderSendMessageResult> {
@@ -92,18 +175,30 @@ async function sendTwilioMessage(
     From: input.fromAddress ?? defaultFrom,
     Body: input.content,
   });
+  if (input.statusCallbackUrl) {
+    form.set("StatusCallback", input.statusCallbackUrl);
+  }
 
-  const response = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-        "Content-Type": "application/x-www-form-urlencoded",
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: form.toString(),
       },
-      body: form.toString(),
-    },
-  );
+    );
+  } catch (error) {
+    return {
+      deliveryStatus: "failed",
+      errorMessage: error instanceof Error ? error.message : "Twilio send failed.",
+      shouldRetry: true,
+    };
+  }
 
   const payload = (await response.json().catch(() => ({}))) as {
     sid?: string;
@@ -115,12 +210,16 @@ async function sendTwilioMessage(
     return {
       deliveryStatus: "failed",
       errorMessage: payload.message ?? "Twilio send failed.",
+      rawStatus: payload.status,
+      shouldRetry: response.status === 429 || response.status >= 500,
     };
   }
 
+  const mappedStatus = mapTwilioMessageStatus(payload.status) ?? "sent";
   return {
     providerMessageId: payload.sid,
-    deliveryStatus: payload.status === "queued" ? "queued" : "sent",
+    deliveryStatus: mappedStatus === "delivered" ? "sent" : mappedStatus,
+    rawStatus: payload.status,
   };
 }
 
@@ -129,6 +228,7 @@ const providers: Record<string, MessagingProvider> = {
     key: "twilio",
     channelType: "sms",
     parseInboundRequest: parseTwilioInboundRequest,
+    parseStatusCallback: parseTwilioStatusCallback,
     sendMessage: sendTwilioMessage,
   },
 };

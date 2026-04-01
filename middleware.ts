@@ -10,6 +10,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next({ request });
   }
 
+  // Block /dev/ pages outside of local development
+  if (pathname.startsWith("/dev") && process.env.NODE_ENV !== "development") {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
   const config = getSupabaseConfig();
 
   // Supabase not configured yet — let the app load without auth redirects

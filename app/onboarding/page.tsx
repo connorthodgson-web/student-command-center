@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { ClassColorField } from "../../components/ClassColorField";
+import { DEFAULT_CLASS_COLOR } from "../../lib/class-colors";
 import type { Weekday } from "../../types";
 
-type Step = 1 | 2;
+type Step = 1 | 2 | "done";
 
 const DAYS: { key: Weekday; label: string }[] = [
   { key: "monday", label: "Mon" },
@@ -25,6 +27,7 @@ export default function OnboardingPage() {
   const [selectedDays, setSelectedDays] = useState<Weekday[]>([]);
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
+  const [classColor, setClassColor] = useState(DEFAULT_CLASS_COLOR);
 
   function handleStep1Submit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,7 +54,7 @@ export default function OnboardingPage() {
             days: selectedDays,
             startTime: startTime || "08:00",
             endTime: endTime || "09:00",
-            color: "#d4edd9",
+            color: classColor,
           },
         ]
       : [];
@@ -76,7 +79,8 @@ export default function OnboardingPage() {
       }
     }
 
-    router.replace("/dashboard");
+    setStep("done");
+    setTimeout(() => router.replace("/dashboard"), 1200);
   }
 
   function toggleDay(day: Weekday) {
@@ -89,35 +93,70 @@ export default function OnboardingPage() {
     "w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/30";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
-      <div className="w-full max-w-md">
-        {/* Progress bar */}
-        <div className="mb-8 flex items-center gap-2">
-          <div
-            className={`h-1.5 flex-1 rounded-full transition-colors ${
-              step >= 1 ? "bg-accent-green-foreground" : "bg-border"
-            }`}
-          />
-          <div
-            className={`h-1.5 flex-1 rounded-full transition-colors ${
-              step >= 2 ? "bg-accent-green-foreground" : "bg-border"
-            }`}
-          />
+    <div className="flex min-h-dvh flex-col bg-background px-6 py-12">
+      <div className="mx-auto w-full max-w-md">
+
+        {/* Brand mark */}
+        <div className="mb-8 flex flex-col items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-hero shadow-card-md">
+            <svg width="28" height="28" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <circle cx="256" cy="256" r="164" fill="#59D889" />
+              <circle cx="256" cy="256" r="118" fill="#102216" />
+              <path d="M187 257.5C187 219.116 216.116 190 254.5 190C286.319 190 308.063 207.498 318.533 231.578L286.664 244.179C281.749 232.771 270.503 225 255.383 225C236.781 225 223 239.276 223 257.5C223 275.227 236.283 290 256.375 290C270.377 290 281.749 282.229 286.789 270.57L318.782 282.922C307.938 307.749 285.073 325 254.5 325C216.116 325 187 295.884 187 257.5Z" fill="#F5F7F5" />
+              <path d="M273 189H307V325H273V189Z" fill="#F5F7F5" />
+            </svg>
+          </div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+            Command Center
+          </p>
         </div>
+
+        {/* Progress bar — hidden on done screen */}
+        {step !== "done" && (
+          <div className="mb-8 flex items-center gap-2">
+            <div
+              className={`h-1 flex-1 rounded-full transition-colors duration-300 ${
+                step >= 1 ? "bg-accent-green-foreground" : "bg-border"
+              }`}
+            />
+            <div
+              className={`h-1 flex-1 rounded-full transition-colors duration-300 ${
+                step >= 2 ? "bg-accent-green-foreground" : "bg-border"
+              }`}
+            />
+          </div>
+        )}
+
+        {/* Done state */}
+        {step === "done" && (
+          <div className="flex flex-col items-center gap-4 py-6 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-accent-green/60">
+              <svg className="h-7 w-7 text-accent-green-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-foreground">
+                You&apos;re all set{name ? `, ${name.trim().split(" ")[0]}` : ""}
+              </p>
+              <p className="mt-1 text-sm text-muted">Taking you to your dashboard…</p>
+            </div>
+          </div>
+        )}
 
         {/* Step 1: Name */}
         {step === 1 && (
           <form onSubmit={handleStep1Submit} className="space-y-6">
             <div>
-              <h1 className="text-2xl font-bold text-foreground">
-                Welcome! What&apos;s your name?
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+                What should I call you?
               </h1>
               <p className="mt-2 text-sm text-muted">
-                Your assistant will use this to greet you personally.
+                Your assistant will use this to personalize its responses.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-card">
               <label className="block">
                 <span className="mb-2 block text-sm font-medium text-foreground">
                   Your name
@@ -136,9 +175,9 @@ export default function OnboardingPage() {
             <button
               type="submit"
               disabled={!name.trim()}
-              className="w-full rounded-full bg-accent-green-foreground px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+              className="w-full rounded-full bg-accent-green-foreground px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
             >
-              Continue →
+              Continue
             </button>
           </form>
         )}
@@ -147,21 +186,19 @@ export default function OnboardingPage() {
         {step === 2 && (
           <form onSubmit={handleStep2Submit} className="space-y-6">
             <div>
-              <h1 className="text-2xl font-bold text-foreground">
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
                 Add your first class
               </h1>
               <p className="mt-2 text-sm text-muted">
-                This helps the assistant understand your schedule. You can add
-                more later.
+                Helps the assistant understand your schedule. You can always add more later.
               </p>
             </div>
 
-            <div className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-sm">
+            <div className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-card">
               {/* Class name */}
               <label className="block">
                 <span className="mb-1.5 block text-sm font-medium text-foreground">
-                  Class name{" "}
-                  <span className="text-xs font-normal text-muted">(required)</span>
+                  Class name
                 </span>
                 <input
                   type="text"
@@ -176,8 +213,7 @@ export default function OnboardingPage() {
               {/* Days */}
               <div>
                 <span className="mb-2 block text-sm font-medium text-foreground">
-                  Days{" "}
-                  <span className="text-xs font-normal text-muted">(optional)</span>
+                  Days
                 </span>
                 <div className="flex flex-wrap gap-2">
                   {DAYS.map((d) => (
@@ -185,7 +221,7 @@ export default function OnboardingPage() {
                       key={d.key}
                       type="button"
                       onClick={() => toggleDay(d.key)}
-                      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition select-none ${
+                      className={`rounded-full border px-4 py-2.5 text-sm font-medium transition select-none min-h-[44px] flex items-center ${
                         selectedDays.includes(d.key)
                           ? "border-accent-green-foreground/50 bg-accent-green text-accent-green-foreground"
                           : "border-border bg-card text-muted hover:bg-surface"
@@ -222,6 +258,12 @@ export default function OnboardingPage() {
                   />
                 </label>
               </div>
+
+              <ClassColorField
+                value={classColor}
+                onChange={setClassColor}
+                helperText="Pick a color now or change it later in settings."
+              />
             </div>
 
             <div className="flex gap-3">
@@ -235,9 +277,9 @@ export default function OnboardingPage() {
               <button
                 type="submit"
                 disabled={!className.trim()}
-                className="flex-1 rounded-full bg-accent-green-foreground px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                className="flex-1 rounded-full bg-accent-green-foreground px-6 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-40"
               >
-                Finish →
+                Get started
               </button>
             </div>
           </form>

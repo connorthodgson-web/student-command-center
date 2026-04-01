@@ -1,46 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { SectionHeader } from "../../components/SectionHeader";
 import { ClassMaterialsPanel } from "../../components/ClassMaterialsPanel";
 import { formatTimeRange } from "../../lib/schedule";
 import { getApTemplate } from "../../lib/ap-course-templates";
+import { hexToRgba, resolveClassColor } from "../../lib/class-colors";
 import {
   formatRotationBadge,
   getClassRotationDays,
+  getRotationBadgeTone,
 } from "../../lib/class-rotation";
+import { useScheduleConfig } from "../../lib/stores/scheduleConfig";
+import { useClasses } from "../../lib/stores/classStore";
 import type { SchoolClass } from "../../types";
 
 export default function ClassesPage() {
-  const [classes, setClasses] = useState<SchoolClass[]>([]);
-  const loading = false;
+  const { scheduleArchitecture, rotationLabels, isRotationSchedule } = useScheduleConfig();
+  const { classes, loading, updateClass } = useClasses();
   const [knowledgeClass, setKnowledgeClass] = useState<SchoolClass | null>(null);
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("scc-onboarding");
-      if (raw) {
-        const data = JSON.parse(raw) as { classes?: SchoolClass[] };
-        if (Array.isArray(data.classes)) setClasses(data.classes);
-      }
-    } catch {}
-  }, []);
-
-  const updateClass = useCallback(async (id: string, updates: Partial<Omit<SchoolClass, "id">>) => {
-    setClasses((prev) => {
-      const updated = prev.map((c) => (c.id === id ? { ...c, ...updates } : c));
-      try {
-        const raw = localStorage.getItem("scc-onboarding");
-        const data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-        localStorage.setItem("scc-onboarding", JSON.stringify({ ...data, classes: updated }));
-      } catch {}
-      return updated;
-    });
-  }, []);
-
   return (
-    <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-10">
+    <main className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-8 px-6 py-10">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <SectionHeader
           title="Classes"
@@ -71,7 +53,13 @@ export default function ClassesPage() {
       )}
 
       {!loading && classes.length > 0 && (
-        <DayTypeScheduleView classes={classes} onKnowledge={setKnowledgeClass} />
+        <DayTypeScheduleView
+          classes={classes}
+          onKnowledge={setKnowledgeClass}
+          rotationLabels={rotationLabels}
+          isRotationSchedule={isRotationSchedule}
+          scheduleArchitectureType={scheduleArchitecture.type}
+        />
       )}
 
       {!loading && classes.length === 0 && (
@@ -291,7 +279,7 @@ function ScheduleTimeline({
             const rawH        = (time.endMin - time.startMin) * PX_PER_MIN;
             const blockH      = Math.max(rawH - BLOCK_GAP, MIN_BLOCK_PX);
             const duration    = time.endMin - time.startMin;
-            const dotColor    = cls.color ?? "#d4edd9";
+            const dotColor    = resolveClassColor(cls.color);
             const isActive    = nowMinutes >= time.startMin && nowMinutes < time.endMin;
 
             // Overlap column geometry (percentage-based, with small pixel gap)
@@ -314,7 +302,7 @@ function ScheduleTimeline({
                   height: blockH,
                   left:   `calc(${leftPct}% + ${gapL}px)`,
                   right:  `calc(${100 - leftPct - colW}% + ${gapR}px)`,
-                  backgroundColor: `${dotColor}${isActive ? "40" : "28"}`,
+                  backgroundColor: hexToRgba(dotColor, isActive ? 0.25 : 0.16),
                   borderLeftColor: dotColor,
                 }}
               >
@@ -337,9 +325,11 @@ function ScheduleTimeline({
                           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
                             getClassRotationDays(cls).length === 2
                               ? "bg-accent-green text-accent-green-foreground"
-                              : cls.scheduleLabel === "A"
-                              ? "bg-accent-blue text-accent-blue-foreground"
-                              : "bg-accent-purple text-accent-purple-foreground"
+                              : getRotationBadgeTone(cls.scheduleLabel) === "blue"
+                                ? "bg-accent-blue text-accent-blue-foreground"
+                                : getRotationBadgeTone(cls.scheduleLabel) === "purple"
+                                  ? "bg-accent-purple text-accent-purple-foreground"
+                                  : "bg-accent-green text-accent-green-foreground"
                           }`}
                         >
                           {formatRotationBadge(cls.rotationDays, cls.scheduleLabel)}
@@ -366,11 +356,11 @@ function ScheduleTimeline({
 
                   <div className="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                     <Link
-                      href={`/chat?q=${encodeURIComponent(`Help me with ${cls.name}. What should I focus on and how can I do well in this class?`)}`}
-                      title="Ask assistant about this class"
+                      href={`/chat?tutor=true&classId=${cls.id}`}
+                      title="Study this class"
                       className="flex items-center justify-center rounded-full bg-black/10 p-1 text-foreground/70 hover:bg-black/20"
                     >
-                      <span className="text-[9px] leading-none">✦</span>
+                      <span className="text-[9px] leading-none">🎓</span>
                     </Link>
                     {onKnowledge && (
                       <button
@@ -447,7 +437,7 @@ function UntimedSection({
             >
               <div
                 className="h-2 w-2 shrink-0 rounded-full"
-                style={{ backgroundColor: cls.color ?? "#d4edd9" }}
+                style={{ backgroundColor: resolveClassColor(cls.color) }}
               />
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -457,9 +447,11 @@ function UntimedSection({
                       className={`rounded-full px-1.5 py-px text-[9px] font-bold ${
                         getClassRotationDays(cls).length === 2
                           ? "bg-accent-green text-accent-green-foreground"
-                          : cls.scheduleLabel === "A"
-                          ? "bg-accent-blue text-accent-blue-foreground"
-                          : "bg-accent-purple text-accent-purple-foreground"
+                          : getRotationBadgeTone(cls.scheduleLabel) === "blue"
+                            ? "bg-accent-blue text-accent-blue-foreground"
+                            : getRotationBadgeTone(cls.scheduleLabel) === "purple"
+                              ? "bg-accent-purple text-accent-purple-foreground"
+                              : "bg-accent-green text-accent-green-foreground"
                       }`}
                     >
                       {formatRotationBadge(cls.rotationDays, cls.scheduleLabel)}
@@ -477,12 +469,12 @@ function UntimedSection({
               </div>
               <div className="flex shrink-0 items-center gap-1 opacity-0 transition-all group-hover:opacity-100">
                 <Link
-                  href={`/chat?q=${encodeURIComponent(`Help me with ${cls.name}. What should I focus on and how can I do well?`)}`}
-                  title="Ask assistant about this class"
+                  href={`/chat?tutor=true&classId=${cls.id}`}
+                  title="Study this class"
                   className="flex items-center gap-1 rounded-full border border-border px-2 py-1 text-[10px] font-medium text-muted hover:border-sidebar-accent/40 hover:text-foreground transition-colors"
                 >
-                  <span className="text-[9px] text-sidebar-accent">✦</span>
-                  Ask
+                  <span className="text-[9px]">🎓</span>
+                  Study
                 </Link>
                 {onKnowledge && (
                   <button
@@ -524,26 +516,28 @@ function sortByStartTime(a: SchoolClass, b: SchoolClass): number {
   return aMin - bMin;
 }
 
-type DayLabel = "A" | "B";
-
 function DayTypeScheduleView({
   classes,
   onKnowledge,
+  rotationLabels,
+  isRotationSchedule,
+  scheduleArchitectureType,
 }: {
   classes: SchoolClass[];
   onKnowledge?: (cls: SchoolClass) => void;
+  rotationLabels: string[];
+  isRotationSchedule: boolean;
+  scheduleArchitectureType: "weekday" | "rotation";
 }) {
-  const dayLabels: DayLabel[] = Array.from(
-    new Set(
-      classes.flatMap((c) => getClassRotationDays(c))
-    )
-  ).sort();
+  const dayLabels = rotationLabels.filter((label) =>
+    classes.some((c) => getClassRotationDays(c, rotationLabels).includes(label)),
+  );
 
-  const everyday = [...classes.filter((c) => getClassRotationDays(c).length === 0)].sort(sortByStartTime);
-  const hasRotation = dayLabels.length > 0;
+  const everyday = [...classes.filter((c) => getClassRotationDays(c, rotationLabels).length === 0)].sort(sortByStartTime);
+  const hasRotation = isRotationSchedule && dayLabels.length > 0;
 
-  const [activeTab, setActiveTab] = useState<DayLabel | "">(dayLabels[0] ?? "");
-  const effectiveTab: DayLabel | "" = (dayLabels as string[]).includes(activeTab)
+  const [activeTab, setActiveTab] = useState<string>(dayLabels[0] ?? "");
+  const effectiveTab = dayLabels.includes(activeTab)
     ? activeTab
     : dayLabels[0] ?? "";
 
@@ -553,6 +547,7 @@ function DayTypeScheduleView({
         <div className="flex items-center gap-2 border-b border-border px-5 py-3.5">
           <h2 className="text-sm font-semibold text-foreground">Schedule</h2>
           <span className="ml-auto text-xs text-muted">
+            {scheduleArchitectureType === "weekday" ? "Weekday-based • " : ""}
             {everyday.length} {everyday.length === 1 ? "class" : "classes"}
           </span>
         </div>
@@ -562,7 +557,7 @@ function DayTypeScheduleView({
   }
 
   // Rotation exists — tab-based view
-  const rotationClasses = [...classes.filter((c) => effectiveTab && getClassRotationDays(c).includes(effectiveTab))].sort(sortByStartTime);
+  const rotationClasses = [...classes.filter((c) => effectiveTab && getClassRotationDays(c, rotationLabels).includes(effectiveTab))].sort(sortByStartTime);
   const tabClasses = [...rotationClasses, ...everyday].sort(sortByStartTime);
 
   return (
@@ -570,14 +565,14 @@ function DayTypeScheduleView({
       {/* Tab bar */}
       <div className="flex border-b border-border">
         {dayLabels.map((label) => {
-          const count = classes.filter((c) => getClassRotationDays(c).includes(label)).length;
+          const count = classes.filter((c) => getClassRotationDays(c, rotationLabels).includes(label)).length;
           const isActive = label === effectiveTab;
           const { bg, text } = getDayLabelStyle(label);
           return (
             <button
               key={label}
               type="button"
-              onClick={() => setActiveTab(label as DayLabel)}
+              onClick={() => setActiveTab(label)}
               className={`flex items-center gap-2 px-5 py-3.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
                 isActive
                   ? "border-foreground text-foreground"
@@ -585,7 +580,7 @@ function DayTypeScheduleView({
               }`}
             >
               <span
-                className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${bg} ${text}`}
+                className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold ${bg} ${text}`}
               >
                 {label}
               </span>
@@ -747,12 +742,12 @@ function ClassKnowledgeModal({ schoolClass, onSave, onClose }: ClassKnowledgeMod
               This info helps the assistant give smarter answers.
             </p>
             <Link
-              href={`/chat?q=${encodeURIComponent(`Let's talk about my ${schoolClass.name} class. Help me understand what I should focus on and how to do well.`)}`}
+              href={`/chat?tutor=true&classId=${schoolClass.id}`}
               className="flex shrink-0 items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition hover:border-sidebar-accent/40 hover:text-foreground"
               onClick={onClose}
             >
-              <span className="text-[10px] text-sidebar-accent">✦</span>
-              Ask assistant
+              <span className="text-[10px]">🎓</span>
+              Study this class
             </Link>
           </div>
           <div className="flex shrink-0 gap-2">

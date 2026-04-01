@@ -73,6 +73,11 @@ export type DbMessagingMessageRow = {
   content: string;
   error_message: string | null;
   metadata: Record<string, unknown> | null;
+  attempt_count: number | null;
+  last_attempted_at: string | null;
+  last_error_at: string | null;
+  provider_last_status: string | null;
+  provider_status_updated_at: string | null;
   sent_at: string | null;
   delivered_at: string | null;
   created_at: string;
@@ -144,6 +149,11 @@ export function mapDbMessagingMessage(row: DbMessagingMessageRow): MessagingMess
     content: row.content,
     errorMessage: row.error_message ?? undefined,
     metadata: row.metadata ?? undefined,
+    attemptCount: row.attempt_count ?? undefined,
+    lastAttemptedAt: row.last_attempted_at ?? undefined,
+    lastErrorAt: row.last_error_at ?? undefined,
+    providerLastStatus: row.provider_last_status ?? undefined,
+    providerStatusUpdatedAt: row.provider_status_updated_at ?? undefined,
     sentAt: row.sent_at ?? undefined,
     deliveredAt: row.delivered_at ?? undefined,
     createdAt: row.created_at,

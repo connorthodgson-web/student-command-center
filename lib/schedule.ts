@@ -1,6 +1,19 @@
 // UI redesign pass
-import type { ClassMeetingTime, SchoolCalendarEntry, SchoolClass, Weekday } from "../types";
+import type {
+  ClassMeetingTime,
+  RotationDay,
+  SchoolCalendarEntry,
+  SchoolClass,
+  ScheduleArchitecture,
+  Weekday,
+} from "../types";
 import { classHasRotationDay, getClassRotationDays } from "./class-rotation";
+import {
+  formatScheduleArchitectureLabel,
+  getRotationLabelsForArchitecture,
+  normalizeScheduleArchitecture,
+  normalizeScheduleDayLabel,
+} from "./schedule-architecture";
 
 const weekdayLabels: Record<Weekday, string> = {
   monday: "Mon",
@@ -41,7 +54,7 @@ export function getClassTimeForDay(
     const meeting = schoolClass.meetings.find((m) => m.day === day);
     if (meeting) return { startTime: meeting.startTime, endTime: meeting.endTime };
   }
-  if (schoolClass.days.includes(day) && schoolClass.startTime) {
+  if (schoolClass.startTime && (!schoolClass.days.length || schoolClass.days.includes(day))) {
     return { startTime: schoolClass.startTime, endTime: schoolClass.endTime };
   }
   return null;
@@ -125,18 +138,27 @@ export function classMeetsOnDay(schoolClass: SchoolClass, day: Weekday): boolean
 export function getClassesForToday(
   classes: SchoolClass[],
   day: Weekday,
-  dayType: "A" | "B" | null
+  dayType: RotationDay | null,
+  architecture?: ScheduleArchitecture | null,
 ): SchoolClass[] {
+  const normalizedArchitecture = normalizeScheduleArchitecture(architecture);
+  const normalizedDayType = normalizeScheduleDayLabel(dayType);
+  const preferredRotationLabels = getRotationLabelsForArchitecture(normalizedArchitecture);
+
   return classes
     .filter((c) => {
       const effectiveDays = getEffectiveDays(c);
       const hasSpecificDays = effectiveDays.length > 0;
 
-      const rotationDays = getClassRotationDays(c);
+      if (normalizedArchitecture.type !== "rotation") {
+        return hasSpecificDays && effectiveDays.includes(day);
+      }
+
+      const rotationDays = getClassRotationDays(c, preferredRotationLabels);
 
       if (rotationDays.length > 0) {
-        if (!dayType) return false;
-        if (!classHasRotationDay(c, dayType)) return false;
+        if (!normalizedDayType) return false;
+        if (!classHasRotationDay(c, normalizedDayType, preferredRotationLabels)) return false;
         if (hasSpecificDays) return effectiveDays.includes(day);
         return true;
       }
@@ -201,12 +223,20 @@ export function isNoSchoolDay(entries: SchoolCalendarEntry[], dateStr: string): 
  * Returns the A/B day override from the calendar for the given date, or null.
  * When set, this should take priority over the user's manual day-type selection.
  */
+export function getScheduleDayOverrideForDate(
+  entries: SchoolCalendarEntry[],
+  dateStr: string
+): RotationDay | null {
+  const entry = getCalendarEntryForDate(entries, dateStr);
+  return normalizeScheduleDayLabel(entry?.scheduleDayOverride ?? entry?.abOverride) ?? null;
+}
+
 export function getAbOverrideForDate(
   entries: SchoolCalendarEntry[],
   dateStr: string
 ): "A" | "B" | null {
-  const entry = getCalendarEntryForDate(entries, dateStr);
-  return entry?.abOverride ?? null;
+  const override = getScheduleDayOverrideForDate(entries, dateStr);
+  return override === "A" || override === "B" ? override : null;
 }
 
 /**
@@ -216,9 +246,12 @@ export function getAbOverrideForDate(
 export function buildCalendarContext(
   entries: SchoolCalendarEntry[],
   todayDateStr: string,
-  effectiveDayType: "A" | "B" | null
+  effectiveDayType: RotationDay | null,
+  architecture?: ScheduleArchitecture | null,
 ): string {
+  const normalizedArchitecture = normalizeScheduleArchitecture(architecture);
   const todayEntry = getCalendarEntryForDate(entries, todayDateStr);
+  const todayOverride = getScheduleDayOverrideForDate(entries, todayDateStr);
   const noSchoolToday =
     todayEntry?.category === "no_school" ||
     todayEntry?.category === "holiday" ||
@@ -229,11 +262,13 @@ export function buildCalendarContext(
     const categoryLabel = todayEntry.category.replace(/_/g, " ");
     const namedLabel = todayEntry.label ? ` — "${todayEntry.label}"` : "";
     todayLine = `TODAY: NO SCHOOL (${categoryLabel}${namedLabel}). The student does NOT have classes today.`;
-  } else if (effectiveDayType) {
-    const calendarNote = todayEntry?.abOverride ? " (set by calendar)" : "";
+  } else if (normalizedArchitecture.type === "rotation" && effectiveDayType) {
+    const calendarNote = todayOverride ? " (set by calendar)" : "";
     todayLine = `TODAY: School day, ${effectiveDayType}-Day${calendarNote}.`;
+  } else if (normalizedArchitecture.type === "weekday") {
+    todayLine = "TODAY: School day with a weekday-based schedule.";
   } else {
-    todayLine = "TODAY: School day. A/B day type not set.";
+    todayLine = "TODAY: School day. Rotation day is not set.";
   }
 
   // Collect special days in the next 7 days (excluding today)
@@ -251,7 +286,8 @@ export function buildCalendarContext(
       });
       const categoryLabel = entry.category.replace(/_/g, " ");
       const namedLabel = entry.label ? ` — "${entry.label}"` : "";
-      const abNote = entry.abOverride ? ` [${entry.abOverride}-Day]` : "";
+      const overrideLabel = getScheduleDayOverrideForDate(entries, dateStr);
+      const abNote = overrideLabel ? ` [${overrideLabel}-Day]` : "";
       upcoming.push(`  • ${readable}: ${categoryLabel}${namedLabel}${abNote}`);
     }
   }
@@ -261,5 +297,5 @@ export function buildCalendarContext(
       ? `Upcoming special days (next 7 days):\n${upcoming.join("\n")}`
       : "No special days scheduled in the next 7 days.";
 
-  return `${todayLine}\n${upcomingText}`;
+  return `Schedule architecture: ${formatScheduleArchitectureLabel(normalizedArchitecture)}\n${todayLine}\n${upcomingText}`;
 }

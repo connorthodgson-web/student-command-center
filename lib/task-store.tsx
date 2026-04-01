@@ -28,6 +28,7 @@ type TaskStoreContextValue = {
   tasks: StudentTask[];
   removingIds: Set<string>;
   loading: boolean;
+  reloadTasks: () => Promise<void>;
   addTask: (task: TaskCreateInput) => Promise<StudentTask>;
   updateTask: (taskId: string, updates: TaskUpdateInput) => Promise<StudentTask>;
   completeTask: (taskId: string) => Promise<void>;
@@ -131,8 +132,17 @@ export function TaskStoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ tasks, removingIds, loading, addTask, updateTask, completeTask, deleteTask }),
-    [tasks, removingIds, loading, addTask, updateTask, completeTask, deleteTask],
+    () => ({
+      tasks,
+      removingIds,
+      loading,
+      reloadTasks: loadTasks,
+      addTask,
+      updateTask,
+      completeTask,
+      deleteTask,
+    }),
+    [tasks, removingIds, loading, loadTasks, addTask, updateTask, completeTask, deleteTask],
   );
 
   return <TaskStoreContext.Provider value={value}>{children}</TaskStoreContext.Provider>;

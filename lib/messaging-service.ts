@@ -1,10 +1,13 @@
 import crypto from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { executeAssistantAction, saveParsedSchedule } from "./assistant-action-executor";
 import {
   appendAssistantSessionEvent,
   appendAssistantSessionMessage,
   ensureAssistantSession,
 } from "./assistant-sessions";
+import { loadAssistantData } from "./assistant-data";
+import { detectAssistantIntent } from "./assistant-intent";
 import { createAdminClient } from "./supabase/admin";
 import {
   mapDbMessagingConversation,
@@ -15,8 +18,14 @@ import {
   type DbMessagingEndpointRow,
   type DbMessagingMessageRow,
 } from "./messaging-data";
+import { parseNaturalLanguageSchedule } from "./ai";
 import { generateAssistantReply, type AssistantHistoryMessage } from "./assistant-chat";
-import { getMessagingProvider, type ProviderSendMessageInput, type ProviderSendMessageResult } from "./messaging-provider";
+import {
+  getMessagingProvider,
+  type ProviderSendMessageInput,
+  type ProviderSendMessageResult,
+  type ProviderStatusUpdate,
+} from "./messaging-provider";
 import {
   DEFAULT_REMINDER_PREFERENCES,
   mapDbReminderPreference,
@@ -24,7 +33,6 @@ import {
   type DbReminderPreferenceRow,
 } from "./reminder-preferences-data";
 import type {
-  AssistantAction,
   MessagingAuthorRole,
   MessagingChannelType,
   MessagingConversation,
@@ -32,7 +40,6 @@ import type {
   MessagingEndpoint,
   MessagingMessage,
   ReminderPreference,
-  StudentTask,
 } from "../types";
 
 type InboundProcessInput = {
@@ -97,6 +104,41 @@ function createVerificationCode() {
 
 function isSimulationAllowed() {
   return process.env.NODE_ENV !== "production";
+}
+
+function getStatusCallbackUrl(providerKey?: string) {
+  if (providerKey !== "twilio") return undefined;
+  const value = process.env.TWILIO_STATUS_CALLBACK_URL?.trim();
+  return value ? value : undefined;
+}
+
+function getDeliveryStatusRank(status: MessagingDeliveryStatus) {
+  switch (status) {
+    case "received":
+    case "processing":
+      return 0;
+    case "queued":
+      return 1;
+    case "sent":
+      return 2;
+    case "delivered":
+    case "failed":
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function resolveDeliveryStatus(current: MessagingDeliveryStatus, next: MessagingDeliveryStatus) {
+  if (current === "delivered" && next !== "delivered") {
+    return current;
+  }
+
+  if (current === "failed" && next !== "delivered") {
+    return current;
+  }
+
+  return getDeliveryStatusRank(next) >= getDeliveryStatusRank(current) ? next : current;
 }
 
 async function getEndpointByIdForUser(
@@ -292,6 +334,7 @@ async function insertMessage(
       content: input.content,
       error_message: input.errorMessage ?? null,
       metadata: input.metadata ?? {},
+      attempt_count: input.direction === "outbound" ? 0 : null,
       sent_at: input.sentAt ?? null,
       delivered_at: input.deliveredAt ?? null,
     })
@@ -320,104 +363,43 @@ async function updateConversationActivity(
   }
 }
 
-function matchTask(
-  tasks: StudentTask[],
-  taskId?: string,
-  taskTitle?: string,
-): { match: StudentTask | null; ambiguous: boolean } {
-  const active = tasks.filter((t) => t.status !== "done");
-
-  if (taskId) {
-    const byId = active.find((t) => t.id === taskId);
-    if (byId) return { match: byId, ambiguous: false };
-  }
-
-  if (!taskTitle) return { match: null, ambiguous: false };
-
-  const needle = taskTitle.trim().toLowerCase();
-  const exactMatches = active.filter((t) => t.title.toLowerCase() === needle);
-  if (exactMatches.length === 1) return { match: exactMatches[0], ambiguous: false };
-  if (exactMatches.length > 1) return { match: null, ambiguous: true };
-
-  const containsMatches = active.filter(
-    (t) => t.title.toLowerCase().includes(needle) || needle.includes(t.title.toLowerCase()),
-  );
-  if (containsMatches.length === 1) return { match: containsMatches[0], ambiguous: false };
-  if (containsMatches.length > 1) return { match: null, ambiguous: true };
-
-  return { match: null, ambiguous: false };
-}
-
 async function applyAssistantAction(
   supabase: SupabaseClient,
   userId: string,
-  action: AssistantAction | undefined,
+  action: Awaited<ReturnType<typeof generateAssistantReply>>["action"],
   assistantContent: string,
 ) {
-  if (!action) {
-    return assistantContent;
-  }
+  const execution = action
+    ? await (async () => {
+        const assistantData = await loadAssistantData({
+          includeCompletedTasks: true,
+          userId,
+          supabase,
+        });
 
-  if (action.type === "complete_task") {
-    const { data, error } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("user_id", userId)
-      .order("due_at", { ascending: true, nullsFirst: false })
-      .order("created_at", { ascending: false });
+        return executeAssistantAction({
+          supabase,
+          userId,
+          action,
+          assistantContent,
+          tasks: assistantData?.tasks ?? [],
+          classes: assistantData?.classes ?? [],
+          automations: assistantData?.automations ?? [],
+          notes: assistantData?.notes ?? [],
+          planningItems: assistantData?.planningItems ?? [],
+          responseFormat: "plain",
+        });
+      })()
+    : {
+        content: assistantContent,
+        sync: [],
+        status: "skipped" as const,
+      };
 
-    if (error) {
-      return assistantContent;
-    }
-
-    const tasks = ((data ?? []) as Array<{
-      id: string;
-      title: string;
-      description: string | null;
-      class_id: string | null;
-      due_at: string | null;
-      status: StudentTask["status"];
-      source: StudentTask["source"];
-      type: StudentTask["type"] | null;
-      reminder_at: string | null;
-      created_at: string;
-      updated_at: string;
-    }>).map((task) => ({
-      id: task.id,
-      title: task.title,
-      description: task.description ?? undefined,
-      classId: task.class_id ?? undefined,
-      dueAt: task.due_at ?? undefined,
-      status: task.status,
-      source: task.source,
-      type: task.type ?? undefined,
-      reminderAt: task.reminder_at ?? undefined,
-      createdAt: task.created_at,
-      updatedAt: task.updated_at,
-    }));
-
-    const { match, ambiguous } = matchTask(tasks, action.taskId, action.taskTitle);
-
-    if (match) {
-      const { error: updateError } = await supabase
-        .from("tasks")
-        .update({ status: "done" })
-        .eq("id", match.id)
-        .eq("user_id", userId);
-
-      if (!updateError) {
-        return `Done - I marked **${match.title}** as complete.`;
-      }
-    }
-
-    if (ambiguous) {
-      return "I found a few matching tasks. Tell me which one you finished and I'll mark it complete.";
-    }
-
-    return assistantContent;
-  }
-
-  return assistantContent;
+  return {
+    content: execution.content,
+    status: execution.status,
+  };
 }
 
 async function dispatchProviderMessage(
@@ -432,6 +414,9 @@ async function dispatchProviderMessage(
       .update({
         delivery_status: "failed",
         error_message: "No messaging provider is configured for this endpoint.",
+        attempt_count: 1,
+        last_attempted_at: new Date().toISOString(),
+        last_error_at: new Date().toISOString(),
       })
       .eq("id", message.id)
       .select("*")
@@ -447,21 +432,55 @@ async function dispatchProviderMessage(
         deliveryStatus: "failed",
         errorMessage: "No messaging provider is configured for this endpoint.",
       } satisfies ProviderSendMessageResult,
-    };
+      };
   }
 
-  const result = await provider.sendMessage(payload);
+  const maxAttempts = 2;
+  let result: ProviderSendMessageResult | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const attemptStartedAt = new Date().toISOString();
+    const { error: attemptError } = await supabase
+      .from("messaging_messages")
+      .update({
+        attempt_count: attempt,
+        last_attempted_at: attemptStartedAt,
+      })
+      .eq("id", message.id);
+
+    if (attemptError) {
+      throw new Error(attemptError.message);
+    }
+
+    result = await provider.sendMessage(payload);
+    if (!result.shouldRetry || attempt === maxAttempts) {
+      break;
+    }
+  }
+
+  const finalizedResult = result ?? {
+    deliveryStatus: "failed",
+    errorMessage: "Message dispatch did not produce a provider result.",
+  } satisfies ProviderSendMessageResult;
+
+  const finalizedAt = new Date().toISOString();
   const updates: Record<string, unknown> = {
-    delivery_status: result.deliveryStatus,
-    error_message: result.errorMessage ?? null,
+    delivery_status: finalizedResult.deliveryStatus,
+    error_message: finalizedResult.errorMessage ?? null,
+    provider_last_status: finalizedResult.rawStatus ?? null,
+    provider_status_updated_at: finalizedResult.rawStatus ? finalizedAt : null,
   };
 
-  if (result.providerMessageId) {
-    updates.provider_message_id = result.providerMessageId;
+  if (finalizedResult.providerMessageId) {
+    updates.provider_message_id = finalizedResult.providerMessageId;
   }
 
-  if (result.deliveryStatus === "sent" || result.deliveryStatus === "queued") {
-    updates.sent_at = new Date().toISOString();
+  if (finalizedResult.deliveryStatus === "sent" || finalizedResult.deliveryStatus === "queued") {
+    updates.sent_at = finalizedAt;
+  }
+
+  if (finalizedResult.deliveryStatus === "failed") {
+    updates.last_error_at = finalizedAt;
   }
 
   const { data, error } = await supabase
@@ -477,7 +496,81 @@ async function dispatchProviderMessage(
 
   return {
     message: mapDbMessagingMessage(data as DbMessagingMessageRow),
-    result,
+    result: finalizedResult,
+  };
+}
+
+export async function applyProviderStatusUpdate(input: ProviderStatusUpdate) {
+  const supabase = getAdminSupabase();
+  const { data, error } = await supabase
+    .from("messaging_messages")
+    .select("*")
+    .eq("provider_key", input.providerKey)
+    .eq("provider_message_id", input.externalMessageId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return {
+      found: false as const,
+      message: null,
+    };
+  }
+
+  const existing = mapDbMessagingMessage(data as DbMessagingMessageRow);
+  const nextStatus = resolveDeliveryStatus(existing.deliveryStatus, input.deliveryStatus);
+  const statusTimestamp = input.occurredAt ?? new Date().toISOString();
+  const nextMetadata = {
+    ...(existing.metadata ?? {}),
+    lastStatusCallback: {
+      deliveryStatus: input.deliveryStatus,
+      rawStatus: input.rawStatus ?? null,
+      occurredAt: statusTimestamp,
+      metadata: input.metadata ?? {},
+    },
+  };
+
+  const { data: updatedRow, error: updateError } = await supabase
+    .from("messaging_messages")
+    .update({
+      delivery_status: nextStatus,
+      error_message: nextStatus === "failed" ? input.errorMessage ?? existing.errorMessage ?? null : null,
+      delivered_at: nextStatus === "delivered" ? statusTimestamp : existing.deliveredAt ?? null,
+      last_error_at: nextStatus === "failed" ? statusTimestamp : existing.lastErrorAt ?? null,
+      provider_last_status: input.rawStatus ?? existing.providerLastStatus ?? null,
+      provider_status_updated_at: statusTimestamp,
+      metadata: nextMetadata,
+    })
+    .eq("id", existing.id)
+    .select("*")
+    .single();
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  if ((existing.metadata?.purpose ?? updatedRow.metadata?.purpose) === "reminder_delivery") {
+    const { error: reminderRunError } = await supabase
+      .from("reminder_delivery_runs")
+      .update({
+        delivery_status: nextStatus === "failed" ? "failed" : "sent",
+        reason: nextStatus === "failed" ? input.errorMessage ?? existing.errorMessage ?? null : null,
+        provider_message_id: input.externalMessageId,
+        attempted_at: statusTimestamp,
+      })
+      .eq("messaging_message_id", existing.id);
+
+    if (reminderRunError) {
+      throw new Error(reminderRunError.message);
+    }
+  }
+
+  return {
+    found: true as const,
+    message: mapDbMessagingMessage(updatedRow as DbMessagingMessageRow),
   };
 }
 
@@ -591,6 +684,7 @@ async function sendMessageToEndpoint(
     toAddress: input.endpoint.address,
     fromAddress: input.assistantAddress,
     content: input.content,
+    statusCallbackUrl: getStatusCallbackUrl(input.providerKey ?? input.endpoint.providerKey),
   });
 
   await updateConversationActivity(supabase, conversation.id, new Date().toISOString());
@@ -690,6 +784,104 @@ export async function processInboundMessage(input: InboundProcessInput) {
     },
   });
 
+  const assistantData = await loadAssistantData({
+    includeCompletedTasks: true,
+    userId: endpoint.userId,
+    supabase,
+  });
+  const detectedIntent = detectAssistantIntent(input.content, assistantData?.classes ?? []);
+
+  if (detectedIntent === "schedule_setup") {
+    const parsedClasses = await parseNaturalLanguageSchedule(
+      input.content,
+      undefined,
+    );
+
+    if (parsedClasses.length > 0) {
+      const count = parsedClasses.length;
+      let assistantContent = `I parsed ${count} ${count === 1 ? "class" : "classes"} from your message.`;
+      let actionStatus: "completed" | "failed" = "failed";
+
+      try {
+        const savedSchedule = await saveParsedSchedule({
+          supabase,
+          userId: endpoint.userId,
+          classes: parsedClasses,
+        });
+        assistantContent = formatScheduleImportResultMessage(savedSchedule, count);
+        actionStatus = "completed";
+      } catch {
+        assistantContent =
+          `I parsed ${count} ${count === 1 ? "class" : "classes"} from your message, ` +
+          "but I ran into an issue saving them. Please try again from web chat or the Classes page.";
+      }
+
+      const queuedMessage = await insertMessage(supabase, {
+        conversationId: conversation.id,
+        userId: endpoint.userId,
+        channelType: conversation.channelType,
+        providerKey: input.providerKey,
+        direction: "outbound",
+        authorRole: "assistant",
+        deliveryStatus: input.dispatchReply === false ? "queued" : "processing",
+        content: assistantContent,
+        metadata: {
+          generatedBy: "assistant",
+          actionType: "setup_schedule",
+          actionStatus,
+        },
+      });
+
+      await appendAssistantSessionMessage(supabase, {
+        sessionId: assistantSession.id,
+        userId: endpoint.userId,
+        role: "assistant",
+        contentType: "text",
+        content: assistantContent,
+        metadata: {
+          messagingConversationId: conversation.id,
+          messagingMessageId: queuedMessage.id,
+          actionType: "setup_schedule",
+          actionStatus,
+        },
+      });
+
+      await appendAssistantSessionEvent(supabase, {
+        sessionId: assistantSession.id,
+        userId: endpoint.userId,
+        eventType: "assistant_response_generated",
+        metadata: {
+          actionType: "setup_schedule",
+          actionStatus,
+        },
+      });
+
+      await updateConversationActivity(supabase, conversation.id, now);
+
+      let assistantMessage = queuedMessage;
+      let providerResult: ProviderSendMessageResult | null = null;
+
+      if (input.dispatchReply !== false) {
+        const dispatched = await dispatchProviderMessage(supabase, queuedMessage, {
+          toAddress: conversation.participantAddress ?? endpoint.address,
+          fromAddress: conversation.assistantAddress,
+          content: assistantContent,
+          statusCallbackUrl: getStatusCallbackUrl(input.providerKey ?? conversation.providerKey),
+        });
+        assistantMessage = dispatched.message;
+        providerResult = dispatched.result;
+      }
+
+      return {
+        ok: true as const,
+        conversation,
+        inboundMessage,
+        assistantMessage,
+        providerResult,
+      };
+    }
+  }
+
   const assistantReply = await generateAssistantReply({
     userId: endpoint.userId,
     message: input.content,
@@ -699,12 +891,13 @@ export async function processInboundMessage(input: InboundProcessInput) {
     channel: "messaging",
   });
 
-  const assistantContent = await applyAssistantAction(
+  const actionExecution = await applyAssistantAction(
     supabase,
     endpoint.userId,
     assistantReply.action,
     assistantReply.data.content,
   );
+  const assistantContent = actionExecution.content;
 
   const queuedMessage = await insertMessage(supabase, {
     conversationId: conversation.id,
@@ -717,6 +910,8 @@ export async function processInboundMessage(input: InboundProcessInput) {
     content: assistantContent,
     metadata: {
       generatedBy: "assistant",
+      actionType: assistantReply.action?.type,
+      actionStatus: actionExecution.status,
     },
   });
 
@@ -730,6 +925,7 @@ export async function processInboundMessage(input: InboundProcessInput) {
       messagingConversationId: conversation.id,
       messagingMessageId: queuedMessage.id,
       actionType: assistantReply.action?.type,
+      actionStatus: actionExecution.status,
     },
   });
 
@@ -737,7 +933,12 @@ export async function processInboundMessage(input: InboundProcessInput) {
     sessionId: assistantSession.id,
     userId: endpoint.userId,
     eventType: "assistant_response_generated",
-    metadata: assistantReply.action ? { actionType: assistantReply.action.type } : {},
+    metadata: assistantReply.action
+      ? {
+          actionType: assistantReply.action.type,
+          actionStatus: actionExecution.status,
+        }
+      : {},
   });
 
   await updateConversationActivity(supabase, conversation.id, now);
@@ -750,6 +951,7 @@ export async function processInboundMessage(input: InboundProcessInput) {
       toAddress: conversation.participantAddress ?? endpoint.address,
       fromAddress: conversation.assistantAddress,
       content: assistantContent,
+      statusCallbackUrl: getStatusCallbackUrl(input.providerKey ?? conversation.providerKey),
     });
     assistantMessage = dispatched.message;
     providerResult = dispatched.result;
@@ -762,6 +964,37 @@ export async function processInboundMessage(input: InboundProcessInput) {
     assistantMessage,
     providerResult,
   };
+}
+
+function formatScheduleImportResultMessage(
+  result: Awaited<ReturnType<typeof saveParsedSchedule>>,
+  parsedCount: number,
+) {
+  const parts: string[] = [];
+
+  if (result.created.length > 0) {
+    parts.push(`added ${result.created.length} ${result.created.length === 1 ? "class" : "classes"}`);
+  }
+  if (result.updated.length > 0) {
+    parts.push(`updated ${result.updated.length} existing ${result.updated.length === 1 ? "class" : "classes"}`);
+  }
+  if (result.skipped.length > 0) {
+    parts.push(`skipped ${result.skipped.length} duplicate ${result.skipped.length === 1 ? "match" : "matches"}`);
+  }
+  if (result.ambiguous.length > 0) {
+    parts.push(`left ${result.ambiguous.length} ambiguous ${result.ambiguous.length === 1 ? "class" : "classes"} unchanged`);
+  }
+
+  if (parts.length === 0) {
+    return `I parsed ${parsedCount} ${parsedCount === 1 ? "class" : "classes"}, but there was nothing new to save.`;
+  }
+
+  const reviewNote =
+    result.partial.length > 0
+      ? ` ${result.partial.length} ${result.partial.length === 1 ? "class still needs" : "classes still need"} missing schedule details filled in.`
+      : "";
+
+  return `Done - I ${parts.join(", ")} in your schedule.${reviewNote}`;
 }
 
 export async function sendOutboundConversationMessage(
@@ -794,6 +1027,7 @@ export async function sendOutboundConversationMessage(
     toAddress: conversation.participantAddress ?? "",
     fromAddress: input.assistantAddress ?? conversation.assistantAddress,
     content: input.content,
+    statusCallbackUrl: getStatusCallbackUrl(input.providerKey ?? conversation.providerKey),
   });
 
   await updateConversationActivity(supabase, conversation.id, new Date().toISOString());

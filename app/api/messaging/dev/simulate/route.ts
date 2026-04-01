@@ -48,6 +48,27 @@ export async function POST(request: Request) {
   }
 
   let endpoint = existingEndpoint ? mapDbMessagingEndpoint(existingEndpoint as DbMessagingEndpointRow) : null;
+  if (endpoint && (endpoint.verificationStatus !== "verified" || !endpoint.isActive)) {
+    const { data: activatedEndpoint, error: activateError } = await supabase
+      .from("messaging_endpoints")
+      .update({
+        is_active: true,
+        is_preferred: true,
+        verification_status: "verified",
+        verified_at: new Date().toISOString(),
+      })
+      .eq("id", endpoint.id)
+      .eq("user_id", userId)
+      .select("*")
+      .single();
+
+    if (activateError) {
+      return NextResponse.json({ error: activateError.message }, { status: 500 });
+    }
+
+    endpoint = mapDbMessagingEndpoint(activatedEndpoint as DbMessagingEndpointRow);
+  }
+
   if (!endpoint) {
     const payload = normalizeMessagingEndpointInput({
       channelType,
@@ -61,6 +82,10 @@ export async function POST(request: Request) {
       .insert({
         user_id: userId,
         ...payload,
+        is_active: true,
+        is_preferred: true,
+        verification_status: "verified",
+        verified_at: new Date().toISOString(),
       })
       .select("*")
       .single();

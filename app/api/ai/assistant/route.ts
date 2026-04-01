@@ -6,10 +6,16 @@ import { normalizeAssistantRequest } from "../../../../lib/assistant-request";
 import {
   parseNaturalLanguageTask,
   parseNaturalLanguageSchedule,
-  answerWorkloadQuestion,
 } from "../../../../lib/ai";
 import { loadAssistantData } from "../../../../lib/assistant-data";
-import type { ReminderPreference, SchoolCalendarEntry, SchoolClass, StudentTask } from "../../../../types";
+import type {
+  ReminderPreference,
+  RotationDay,
+  ScheduleArchitecture,
+  SchoolCalendarEntry,
+  SchoolClass,
+  StudentTask,
+} from "../../../../types";
 
 const client = new OpenAI(); // Reads OPENAI_API_KEY from environment automatically
 
@@ -19,7 +25,8 @@ export async function POST(request: Request) {
     tasks?: StudentTask[];
     classes?: SchoolClass[];
     reminderPreferences?: ReminderPreference;
-    effectiveDayType?: "A" | "B" | null;
+    effectiveDayType?: RotationDay | null;
+    scheduleArchitecture?: ScheduleArchitecture;
     calendarEntries?: SchoolCalendarEntry[];
     source?: "text" | "voice_transcript";
     channel?: "web_chat" | "voice" | "mobile" | "tutoring";
@@ -83,7 +90,7 @@ export async function POST(request: Request) {
           role: "system",
           content: `You are a classifier for a student assistant app. Given a student's message, decide whether it is:
 - setup_schedule: the student is describing their full class schedule, listing multiple classes, or asking the app to build their schedule from a description (e.g. "my A-day classes are...", "I have English at 8, Math at 10...", "set up my schedule")
-- add_task: the student is describing something they need to do, have due, or want to remember
+- add_task: the student is logging something they need to do or that is scheduled — including homework, assignments, essays, projects, tests, quizzes, or exams. This includes bare factual statements like "Bio test next Friday", "Calc homework due tomorrow", "History essay Monday", "Spanish quiz this week". If the message names a task/test/quiz/assignment and gives or implies a date, classify as add_task.
 - chat: the student is asking a question, asking about their workload, asking what to work on, or having a general conversation
 Return ONLY a JSON object: { "intent": "setup_schedule" } or { "intent": "add_task" } or { "intent": "chat" }. No other text.`,
         },
@@ -109,43 +116,30 @@ Return ONLY a JSON object: { "intent": "setup_schedule" } or { "intent": "add_ta
 
   try {
     if (intent === "setup_schedule") {
-      const parsedClasses = await parseNaturalLanguageSchedule(message);
+      const parsedClasses = await parseNaturalLanguageSchedule(message, normalized.scheduleArchitecture);
       return NextResponse.json({ intent: "setup_schedule", classes: parsedClasses });
     } else if (intent === "add_task") {
       const task = await parseNaturalLanguageTask(message, classes);
       return NextResponse.json({ intent: "add_task", task });
     } else {
-      const isTutoringRequest =
-        normalized.assistant.channel === "tutoring" ||
-        Boolean(normalized.assistant.tutoringMode) ||
-        Boolean(normalized.assistant.tutoringContext);
-
-      const reply = isTutoringRequest
-        ? (
-            await generateAssistantReply({
-              message,
-              tasks,
-              classes,
-              reminderPreferences,
-              currentDatetime: normalized.currentDatetime,
-              calendarEntries,
-              effectiveDayType,
-              source: normalized.assistant.source,
-              channel: normalized.assistant.channel,
-              classId: normalized.assistant.classId,
-              taskId: normalized.assistant.taskId,
-              attachments: normalized.assistant.attachments,
-              tutoringContext: normalized.assistant.tutoringContext,
-            })
-          ).data
-        : await answerWorkloadQuestion(
-            message,
-            tasks,
-            classes,
-            reminderPreferences,
-            effectiveDayType,
-            calendarEntries
-          );
+      const reply = (
+        await generateAssistantReply({
+          message,
+          tasks,
+          classes,
+          reminderPreferences,
+          currentDatetime: normalized.currentDatetime,
+          calendarEntries,
+          effectiveDayType,
+          scheduleArchitecture: normalized.scheduleArchitecture,
+          source: normalized.assistant.source,
+          channel: normalized.assistant.channel,
+          classId: normalized.assistant.classId,
+          taskId: normalized.assistant.taskId,
+          attachments: normalized.assistant.attachments,
+          tutoringContext: normalized.assistant.tutoringContext,
+        })
+      ).data;
       return NextResponse.json({ intent: "chat", reply });
     }
   } catch {

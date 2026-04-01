@@ -4,9 +4,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { useAutomations } from "../../lib/stores/automationStore";
 import { useClasses } from "../../lib/stores/classStore";
+import { usePlanningStore } from "../../lib/stores/planningStore";
 import type { Automation, AutomationType } from "../../types";
-
-// ─── Type metadata ───────────────────────────────────────────────────────────
 
 const TYPE_LABELS: Record<AutomationType, string> = {
   tonight_summary: "Tonight's Summary",
@@ -35,15 +34,11 @@ const TYPE_ACCENT: Record<AutomationType, string> = {
   custom: "bg-border",
 };
 
-// ─── Example prompts ─────────────────────────────────────────────────────────
-
 const EXAMPLE_PROMPTS = [
   "Remind me to study chemistry every Sunday at 6 PM",
   "Give me a summary every school night at 7:30 PM",
   "Alert me 2 days before any assignment is due",
 ];
-
-// ─── Sub-components ──────────────────────────────────────────────────────────
 
 function ToggleSwitch({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   return (
@@ -88,60 +83,54 @@ function AutomationCard({
   return (
     <div
       className={`group relative flex gap-4 rounded-xl border border-border bg-card p-4 shadow-card transition-all hover:shadow-card-md ${
-        automation.enabled ? "opacity-100" : "opacity-55"
+        automation.enabled ? "opacity-100" : "opacity-60"
       }`}
     >
-      {/* Left accent bar */}
-      <div className={`absolute left-0 top-4 bottom-4 w-[3px] rounded-r-full ${accentBar}`} />
+      <div className={`absolute bottom-4 left-0 top-4 w-[3px] rounded-r-full ${accentBar}`} />
 
-      {/* Content */}
-      <div className="ml-2 flex flex-1 flex-col gap-1.5 min-w-0">
+      <div className="ml-2 flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex items-start justify-between gap-3">
-          <p className="text-sm font-medium text-foreground leading-snug">
-            {automation.title}
-          </p>
-          <div className="flex items-center gap-2 shrink-0">
+          <p className="text-sm font-medium leading-snug text-foreground">{automation.title}</p>
+          <div className="flex shrink-0 items-center gap-2">
             <ToggleSwitch enabled={automation.enabled} onToggle={onToggle} />
           </div>
         </div>
 
         <p className="text-xs text-muted">{automation.scheduleDescription}</p>
 
-        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
-          {/* Type badge */}
+        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
           <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${typeBadge}`}>
             {typeLabel}
           </span>
 
-          {/* Related class label */}
           {relatedClassName && (
             <span className="inline-flex items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-muted">
               {relatedClassName}
             </span>
           )}
 
-          {/* Delivery channel */}
           <span className="inline-flex items-center rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-muted">
-            {automation.deliveryChannel === "in_app" ? "In-app" : automation.deliveryChannel === "email" ? "Email" : "Push"}
+            {automation.deliveryChannel === "sms" ? "SMS" : "In-app"}
           </span>
 
-          {/* Created date */}
-          <span className="text-[11px] text-muted/60 ml-auto">Added {createdDate}</span>
+          <span className="ml-auto text-[11px] text-muted/60">Added {createdDate}</span>
         </div>
 
-        {/* Delete confirmation inline */}
         {confirmDelete && (
           <div className="mt-2 flex items-center gap-2 rounded-lg border border-accent-rose/40 bg-accent-rose/10 px-3 py-2">
             <p className="flex-1 text-xs text-accent-rose-foreground">Remove this automation?</p>
             <button
-              onClick={() => { onRemove(); setConfirmDelete(false); }}
-              className="rounded px-2 py-1 text-xs font-medium text-accent-rose-foreground hover:bg-accent-rose/20 transition-colors"
+              onClick={() => {
+                onRemove();
+                setConfirmDelete(false);
+              }}
+              className="rounded px-2 py-1 text-xs font-medium text-accent-rose-foreground transition-colors hover:bg-accent-rose/20"
             >
               Remove
             </button>
             <button
               onClick={() => setConfirmDelete(false)}
-              className="rounded px-2 py-1 text-xs text-muted hover:text-foreground transition-colors"
+              className="rounded px-2 py-1 text-xs text-muted transition-colors hover:text-foreground"
             >
               Cancel
             </button>
@@ -149,11 +138,10 @@ function AutomationCard({
         )}
       </div>
 
-      {/* Remove button — visible on hover, triggers confirmation */}
       {!confirmDelete && (
         <button
           onClick={() => setConfirmDelete(true)}
-          className="absolute right-3 top-3 flex rounded p-1 text-muted opacity-0 transition-opacity hover:bg-surface hover:text-foreground group-hover:opacity-100 active:opacity-100 focus-visible:opacity-100"
+          className="absolute right-3 top-3 flex rounded p-1 text-muted/50 transition-all hover:bg-surface hover:text-foreground md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 focus-visible:opacity-100"
           aria-label="Remove automation"
         >
           <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -168,11 +156,9 @@ function AutomationCard({
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface/50 px-8 py-14 text-center">
-      {/* Icon */}
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-accent-green/40">
         <svg className="h-6 w-6 text-accent-green-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       </div>
 
@@ -192,11 +178,10 @@ function EmptyState() {
   );
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
-
 export default function AutomationsPage() {
-  const { automations, toggleAutomation, removeAutomation } = useAutomations();
+  const { automations, loading, toggleAutomation, removeAutomation } = useAutomations();
   const { classes } = useClasses();
+  const { items: planningItems } = usePlanningStore();
 
   const active = automations.filter((a) => a.enabled);
   const inactive = automations.filter((a) => !a.enabled);
@@ -208,11 +193,10 @@ export default function AutomationsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* ── Page header ──────────────────────────────────────── */}
+    <div className="min-h-dvh bg-background animate-page-enter">
       <div className="border-b border-border bg-card px-6 py-8 md:px-10">
         <div className="mx-auto max-w-2xl">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="mb-1 flex items-center gap-2">
             <span className="text-[15px] leading-none opacity-70">◉</span>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">
               Automations
@@ -223,36 +207,57 @@ export default function AutomationsPage() {
               Reminders &amp; Automations
             </h1>
             {totalCount > 0 && (
-              <span className="inline-flex items-center rounded-full bg-surface border border-border px-2.5 py-0.5 text-xs font-medium text-muted">
+              <span className="inline-flex items-center rounded-full border border-border bg-surface px-2.5 py-0.5 text-xs font-medium text-muted">
                 {totalCount} total · {active.length} active
               </span>
             )}
           </div>
-          <p className="mt-2 text-sm text-muted leading-relaxed">
-            The assistant can set up recurring reminders, nightly summaries, and
-            study nudges for you. Active automations are shown below.
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            Your recurring reminders and assistant automations live here. Delivery preferences are in Settings.
           </p>
         </div>
       </div>
 
-      <div className="mx-auto max-w-2xl px-6 py-8 md:px-10 space-y-10">
+      <div className="mx-auto max-w-2xl space-y-10 px-6 py-8 md:px-10">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Link href="/settings?tab=notifications" className="rounded-2xl border border-border bg-card p-4 transition hover:bg-surface">
+            <p className="text-sm font-semibold text-foreground">Reminder preferences</p>
+            <p className="mt-1 text-xs text-muted">
+              Choose delivery in Settings: in-app now, SMS when your number is verified.
+            </p>
+          </Link>
+          <Link href="/activities" className="rounded-2xl border border-border bg-card p-4 transition hover:bg-surface">
+            <p className="text-sm font-semibold text-foreground">Activities &amp; events</p>
+            <p className="mt-1 text-xs text-muted">
+              You have {planningItems.length} saved commitment{planningItems.length === 1 ? "" : "s"} the assistant can plan around.
+            </p>
+          </Link>
+          <div className="rounded-2xl border border-border bg-card p-4">
+            <p className="text-sm font-semibold text-foreground">This page</p>
+            <p className="mt-1 text-xs text-muted">
+              Reminder rules only. Practices, shifts, and appointments belong in Activities.
+            </p>
+          </div>
+        </div>
 
-        {/* ── Assistant CTA ─────────────────────────────────── */}
         <div className="rounded-2xl border border-sidebar-accent/30 bg-hero px-6 py-5">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-accent/20">
               <span className="text-sm leading-none text-sidebar-accent">✦</span>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white">
-                Ask the assistant to set one up
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-white">Ask the assistant to set one up</p>
+              <p className="mt-1 text-xs leading-relaxed text-white/60">
+                Just describe what you want in plain English. The assistant will create and save it
+                for you.
               </p>
-              <p className="mt-1 text-xs text-white/60 leading-relaxed">
-                Just describe what you want in plain English. The assistant will create
-                and save it for you.
+              <p className="mt-2 text-xs leading-relaxed text-white/45">
+                If you are trying to save a practice, shift, or appointment instead, use{" "}
+                <Link href="/activities" className="underline underline-offset-2">
+                  Activities &amp; Events
+                </Link>.
               </p>
 
-              {/* Example chips */}
               <div className="mt-3 flex flex-wrap gap-2">
                 {EXAMPLE_PROMPTS.map((prompt) => (
                   <Link
@@ -268,8 +273,11 @@ export default function AutomationsPage() {
           </div>
         </div>
 
-        {/* ── Active automations ────────────────────────────── */}
-        {automations.length === 0 ? (
+        {loading ? (
+          <div className="rounded-2xl border border-dashed border-border bg-surface/50 px-8 py-14 text-center text-sm text-muted">
+            Loading automations...
+          </div>
+        ) : automations.length === 0 ? (
           <EmptyState />
         ) : (
           <div className="space-y-6">
@@ -284,7 +292,7 @@ export default function AutomationsPage() {
             {active.length > 0 && (
               <section>
                 <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
-                  Active — {active.length}
+                  Active · {active.length}
                 </h2>
                 <div className="space-y-3">
                   {active.map((automation) => (
@@ -303,7 +311,7 @@ export default function AutomationsPage() {
             {inactive.length > 0 && (
               <section>
                 <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted">
-                  Paused — {inactive.length}
+                  Paused · {inactive.length}
                 </h2>
                 <div className="space-y-3">
                   {inactive.map((automation) => (
@@ -321,9 +329,8 @@ export default function AutomationsPage() {
           </div>
         )}
 
-        {/* ── Delivery note ─────────────────────────────────── */}
         <p className="text-center text-[11px] text-muted/60">
-          Reminders currently delivered in-app only. Email &amp; push notifications coming soon.
+          Delivery channel comes from Settings. Automations defines what runs and when.
         </p>
       </div>
     </div>

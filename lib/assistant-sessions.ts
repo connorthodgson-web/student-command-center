@@ -290,6 +290,7 @@ export async function listAssistantSessions(
     classId?: string;
     status?: AssistantSessionStatus;
     tutoringMode?: TutoringMode;
+    limit?: number;
   },
 ) {
   let query = supabase
@@ -310,6 +311,9 @@ export async function listAssistantSessions(
   }
   if (options?.tutoringMode) {
     query = query.eq("tutoring_mode", options.tutoringMode);
+  }
+  if (typeof options?.limit === "number" && Number.isFinite(options.limit) && options.limit > 0) {
+    query = query.limit(Math.floor(options.limit));
   }
 
   const { data, error } = await query;

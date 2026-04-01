@@ -14,11 +14,16 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const classId = url.searchParams.get("classId") ?? undefined;
   const tutoringMode = (url.searchParams.get("tutoringMode") ?? undefined) as TutoringMode | undefined;
+  const status = (url.searchParams.get("status") ?? undefined) as "active" | "archived" | undefined;
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Number.parseInt(limitParam, 10) : undefined;
 
   try {
     const data = await listTutoringSessions(auth.supabase, auth.userId, {
       classId,
       tutoringMode,
+      status,
+      limit: typeof limit === "number" && limit > 0 ? limit : undefined,
     });
 
     return NextResponse.json({ data });

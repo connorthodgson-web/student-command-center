@@ -1,5 +1,6 @@
 import type { ClassMeetingTime, SchoolClass, Weekday } from "../types";
 import { deriveScheduleLabel, normalizeRotationDays } from "./class-rotation";
+import { normalizeClassColor } from "./class-colors";
 
 export type DbClassRow = {
   id: string;
@@ -13,8 +14,8 @@ export type DbClassRow = {
   start_time: string | null;
   end_time: string | null;
   meetings: ClassMeetingTime[] | null;
-  schedule_label: "A" | "B" | null;
-  rotation_days: Array<"A" | "B"> | null;
+  schedule_label: string | null;
+  rotation_days: string[] | null;
   notes: string | null;
   syllabus_text: string | null;
   class_notes: string | null;
@@ -35,7 +36,7 @@ export function mapDbClassToSchoolClass(row: DbClassRow): SchoolClass {
     teacherName: row.teacher_name ?? undefined,
     teacherEmail: row.teacher_email ?? undefined,
     room: row.room ?? undefined,
-    color: row.color ?? undefined,
+    color: normalizeClassColor(row.color) ?? undefined,
     days: row.days ?? [],
     startTime: row.start_time ?? "",
     endTime: row.end_time ?? "",
@@ -68,7 +69,7 @@ export function mapSchoolClassToInsert(
     teacher_name: emptyToNull(normalized.teacherName),
     teacher_email: emptyToNull(normalized.teacherEmail),
     room: emptyToNull(normalized.room),
-    color: emptyToNull(normalized.color),
+    color: emptyToNull(normalizeClassColor(normalized.color)),
     days: normalized.days.length > 0 ? normalized.days : null,
     start_time: emptyToNull(normalized.startTime),
     end_time: emptyToNull(normalized.endTime),
@@ -108,7 +109,7 @@ export function mapSchoolClassToUpdate(updates: ClassUpdate) {
     payload.room = emptyToNull(normalized.room);
   }
   if ("color" in normalized) {
-    payload.color = emptyToNull(normalized.color);
+    payload.color = emptyToNull(normalizeClassColor(normalized.color));
   }
   if ("days" in normalized) {
     payload.days = normalized.days && normalized.days.length > 0 ? normalized.days : null;
@@ -192,6 +193,10 @@ export function normalizeSchoolClassInput<T extends Partial<ClassInsert>>(
 
   if ("rotationDays" in next && next.rotationDays) {
     next.rotationDays = normalizeRotationDays(next.rotationDays, next.scheduleLabel) as T["rotationDays"];
+  }
+
+  if ("color" in next) {
+    next.color = normalizeClassColor(next.color) as T["color"];
   }
 
   return next;

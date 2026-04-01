@@ -5,10 +5,9 @@ import { useClasses } from "../lib/stores/classStore";
 import { useTaskStore } from "../lib/task-store";
 import { useCalendar } from "../lib/stores/calendarStore";
 import { useScheduleConfig } from "../lib/stores/scheduleConfig";
-import { getAbOverrideForDate, getTodayDateString } from "../lib/schedule";
+import { usePlanningStore } from "../lib/stores/planningStore";
+import { getScheduleDayOverrideForDate, getTodayDateString } from "../lib/schedule";
 import { buildTodayContext, formatTodayContextForPrompt } from "../lib/assistant-context";
-import { loadActivities } from "../lib/activities";
-import { loadConstraints } from "../lib/constraints";
 import { loadProfile } from "../lib/profile";
 import { renderContent } from "../lib/render-content";
 
@@ -16,7 +15,8 @@ export function TodayFocusCard() {
   const { classes } = useClasses();
   const { tasks } = useTaskStore();
   const { entries: calendarEntries } = useCalendar();
-  const { todayDayType } = useScheduleConfig();
+  const { todayDayType, scheduleArchitecture } = useScheduleConfig();
+  const { items: planningItems } = usePlanningStore();
 
   const [focus, setFocus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,11 +29,9 @@ export function TodayFocusCard() {
 
     try {
       const todayDateStr = getTodayDateString();
-      const calendarAbOverride = getAbOverrideForDate(calendarEntries, todayDateStr);
+      const calendarAbOverride = getScheduleDayOverrideForDate(calendarEntries, todayDateStr);
       const effectiveDayType = calendarAbOverride ?? todayDayType;
 
-      const activities = loadActivities();
-      const constraints = loadConstraints();
       const profile = loadProfile();
 
       const ctx = buildTodayContext(
@@ -42,8 +40,8 @@ export function TodayFocusCard() {
         tasks,
         calendarEntries,
         effectiveDayType,
-        activities,
-        constraints
+        planningItems,
+        scheduleArchitecture,
       );
 
       const contextText = formatTodayContextForPrompt(ctx);
@@ -67,7 +65,7 @@ export function TodayFocusCard() {
     } finally {
       setLoading(false);
     }
-  }, [classes, tasks, calendarEntries, todayDayType]);
+  }, [classes, tasks, calendarEntries, todayDayType, planningItems, scheduleArchitecture]);
 
   useEffect(() => {
     generate();

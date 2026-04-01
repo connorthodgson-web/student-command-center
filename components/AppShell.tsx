@@ -8,6 +8,28 @@ import { useAuth } from "../lib/auth-context";
 import { loadProfile } from "../lib/profile";
 import { OnboardingModal } from "./OnboardingModal";
 
+// Page title map for mobile header
+const PAGE_TITLES: Record<string, string> = {
+  "/dashboard": "Dashboard",
+  "/chat": "Assistant",
+  "/tasks": "Tasks",
+  "/notes": "Memory",
+  "/classes": "Classes",
+  "/activities": "Activities",
+  "/calendar": "Calendar",
+  "/automations": "Automations",
+  "/settings": "Settings",
+};
+
+function getMobilePageTitle(pathname: string): string {
+  if (pathname === "/" || pathname.startsWith("/dashboard")) return "Dashboard";
+  if (pathname.startsWith("/chat")) return "Assistant";
+  for (const [path, label] of Object.entries(PAGE_TITLES)) {
+    if (pathname.startsWith(path)) return label;
+  }
+  return "Command Center";
+}
+
 // primary: true items get a slightly elevated treatment when inactive
 const NAV_LINKS = [
   {
@@ -41,6 +63,16 @@ const NAV_LINKS = [
       <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
           d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    href: "/notes",
+    label: "Memory",
+    icon: (
+      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+          d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
       </svg>
     ),
   },
@@ -233,7 +265,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-dvh bg-background">
       {showOnboarding && (
         <OnboardingModal onComplete={() => setShowOnboarding(false)} />
       )}
@@ -245,11 +277,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* ── Mobile top bar ──────────────────────────────────────── */}
       <div className="flex items-center justify-between border-b border-white/[0.07] bg-sidebar px-4 py-3 md:hidden">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-sidebar-accent/20">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-sidebar-accent/20">
             <span className="text-xs font-bold leading-none text-sidebar-accent">S</span>
           </div>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80">
-            Command Center
+          <span className="text-sm font-semibold text-white/90">
+            {getMobilePageTitle(pathname)}
           </span>
         </div>
         <button
@@ -314,7 +346,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <span
                   className={`flex h-10 w-10 items-center justify-center rounded-full text-base font-bold shadow-lg transition-all ${
                     pathname === "/chat" || pathname.startsWith("/chat/")
-                      ? "bg-sidebar-accent text-[#0f2117] scale-105"
+                      ? "bg-sidebar-accent text-hero scale-105"
                       : "bg-sidebar-accent/20 text-sidebar-accent"
                   }`}
                 >

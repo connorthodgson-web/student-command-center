@@ -4,7 +4,12 @@ import {
   hasMixedTimes,
   sortedMeetings,
 } from "../lib/schedule";
-import { formatRotationBadge, getClassRotationDays } from "../lib/class-rotation";
+import { resolveClassColor } from "../lib/class-colors";
+import {
+  formatRotationBadge,
+  getClassRotationDays,
+  getRotationBadgeTone,
+} from "../lib/class-rotation";
 import type { SchoolClass } from "../types";
 
 const DAY_ABBR: Record<string, string> = {
@@ -39,15 +44,17 @@ export function ScheduleCard({ schoolClass, onDelete, onEdit, onKnowledge }: Sch
   const rotationBadgeClass =
     rotationDays.length === 2
       ? "bg-accent-green text-accent-green-foreground"
-      : schoolClass.scheduleLabel === "A"
+      : getRotationBadgeTone(schoolClass.scheduleLabel) === "blue"
         ? "bg-accent-blue text-accent-blue-foreground"
-        : "bg-accent-purple text-accent-purple-foreground";
+        : getRotationBadgeTone(schoolClass.scheduleLabel) === "purple"
+          ? "bg-accent-purple text-accent-purple-foreground"
+          : "bg-accent-green text-accent-green-foreground";
 
   return (
     <article
       className="overflow-hidden rounded-2xl border border-border bg-card shadow-card transition-shadow hover:shadow-card-md"
       style={{
-        borderLeftColor: schoolClass.color ?? "#d4edd9",
+        borderLeftColor: resolveClassColor(schoolClass.color),
         borderLeftWidth: "4px",
       }}
     >

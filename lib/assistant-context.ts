@@ -1,9 +1,14 @@
-import type { SchoolCalendarEntry, SchoolClass, StudentTask, Weekday } from "../types";
+import type {
+  PlanningItem,
+  RotationDay,
+  SchoolCalendarEntry,
+  SchoolClass,
+  ScheduleArchitecture,
+  StudentTask,
+  Weekday,
+} from "../types";
 import { getClassesForToday, getClassTimeForDay, isNoSchoolDay } from "./schedule";
-import type { Activity } from "./activities";
-import { getTodayActivities, formatActivityTime } from "./activities";
-import type { LifeConstraint } from "./constraints";
-import { getRelevantConstraints } from "./constraints";
+import { formatPlanningItemWindow, isPlanningItemOnDate } from "./planning-items";
 
 function toDateStr(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -33,15 +38,16 @@ export interface TodayContextTask {
 export interface TodayContext {
   date: string;
   dayOfWeek: string;
-  dayType: "A" | "B" | null;
+  scheduleDayLabel: RotationDay | null;
   isNoSchool: boolean;
   todayClasses: TodayContextClass[];
   tasksDueToday: TodayContextTask[];
   tasksDueTomorrow: TodayContextTask[];
   tasksDueThisWeek: TodayContextTask[];
   overdueTasks: TodayContextTask[];
-  todayActivities: Activity[];
-  relevantConstraints: LifeConstraint[];
+  todayActivities: PlanningItem[];
+  upcomingEvents: PlanningItem[];
+  scheduleArchitecture?: ScheduleArchitecture;
 }
 
 export function buildTodayContext(
@@ -49,9 +55,9 @@ export function buildTodayContext(
   classes: SchoolClass[],
   tasks: StudentTask[],
   calendarEntries: SchoolCalendarEntry[],
-  effectiveDayType: "A" | "B" | null,
-  activities: Activity[] = [],
-  constraints: LifeConstraint[] = [],
+  effectiveDayType: RotationDay | null,
+  planningItems: PlanningItem[] = [],
+  scheduleArchitecture?: ScheduleArchitecture,
 ): TodayContext {
   const todayStr = toDateStr(now);
   const weekday = getWeekday(now);
@@ -60,7 +66,7 @@ export function buildTodayContext(
 
   const todayClasses: TodayContextClass[] = noSchool
     ? []
-    : getClassesForToday(classes, weekday, effectiveDayType).map((c) => {
+    : getClassesForToday(classes, weekday, effectiveDayType, scheduleArchitecture).map((c) => {
         const times = getClassTimeForDay(c, weekday);
         return {
           name: c.name,
@@ -109,18 +115,28 @@ export function buildTodayContext(
     .filter((t) => t.dueAt && new Date(t.dueAt) < startOfToday)
     .map(toContextTask);
 
+  const todayActivities = planningItems.filter(
+    (item) => item.kind === "recurring_activity" && isPlanningItemOnDate(item, now),
+  );
+
+  const upcomingEvents = planningItems.filter((item) => {
+    if (item.kind !== "one_off_event" || !item.date || !item.enabled) return false;
+    return item.date >= todayStr && item.date <= toDateStr(endOfWeek);
+  });
+
   return {
     date: todayStr,
     dayOfWeek,
-    dayType: effectiveDayType,
+    scheduleDayLabel: effectiveDayType,
     isNoSchool: noSchool,
     todayClasses,
     tasksDueToday,
     tasksDueTomorrow,
     tasksDueThisWeek,
     overdueTasks,
-    todayActivities: getTodayActivities(activities),
-    relevantConstraints: getRelevantConstraints(constraints),
+    todayActivities,
+    upcomingEvents,
+    scheduleArchitecture,
   };
 }
 
@@ -134,8 +150,14 @@ export function formatTodayContextForPrompt(ctx: TodayContext): string {
   const now = new Date(`${ctx.date}T${new Date().toTimeString().slice(0, 8)}`);
 
   lines.push(`## Today's context`);
-  const dayLabel = ctx.dayType ? ` (${ctx.dayType}-Day)` : "";
-  lines.push(`${ctx.dayOfWeek}, ${ctx.date}${dayLabel}${ctx.isNoSchool ? " — no school" : ""}`);
+  const architectureLabel =
+    ctx.scheduleArchitecture?.type === "rotation"
+      ? ` [rotation: ${ctx.scheduleArchitecture.rotationLabels.join("/")}]`
+      : ctx.scheduleArchitecture?.type === "weekday"
+        ? " [weekday schedule]"
+        : "";
+  const dayLabel = ctx.scheduleDayLabel ? ` (${ctx.scheduleDayLabel}-Day)` : "";
+  lines.push(`${ctx.dayOfWeek}, ${ctx.date}${dayLabel}${architectureLabel}${ctx.isNoSchool ? " — no school" : ""}`);
   lines.push(``);
 
   if (!ctx.isNoSchool && ctx.todayClasses.length > 0) {
@@ -219,18 +241,26 @@ export function formatTodayContextForPrompt(ctx: TodayContext): string {
     lines.push(`Outside activities today:`);
     for (const a of ctx.todayActivities) {
       const loc = a.location ? ` @ ${a.location}` : "";
-      lines.push(`  - ${a.title}: ${formatActivityTime(a.startTime, a.endTime)}${loc}`);
+      lines.push(`  - ${a.title}: ${formatPlanningItemWindow(a)}${loc}`);
     }
   }
 
-  if (ctx.relevantConstraints.length > 0) {
+  if (ctx.upcomingEvents.length > 0) {
     lines.push(``);
-    lines.push(`Life constraints / commitments:`);
-    for (const c of ctx.relevantConstraints) {
-      const dateLabel = c.date
-        ? ` (${new Date(c.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })})`
-        : "";
-      lines.push(`  - ${c.text}${dateLabel}`);
+    lines.push(`Upcoming one-off events:`);
+    for (const event of ctx.upcomingEvents) {
+      const dateLabel = event.date
+        ? new Date(event.date + "T12:00:00").toLocaleDateString("en-US", {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          })
+        : "Date not set";
+      const loc = event.location ? ` @ ${event.location}` : "";
+      const notes = event.notes ? ` — ${event.notes}` : "";
+      lines.push(
+        `  - ${event.title}: ${dateLabel}${event.isAllDay ? " (all day)" : ` (${formatPlanningItemWindow(event)})`}${loc}${notes}`,
+      );
     }
   }
 

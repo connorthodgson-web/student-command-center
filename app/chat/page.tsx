@@ -11,12 +11,12 @@ export default async function ChatPage({
   const openTutoring = params?.tutor === "true";
 
   return (
-    // h-[calc(100dvh-52px)]: subtracts the mobile top bar (~52px) so the chat fills
-    // exactly the remaining visible viewport without overflowing behind it.
-    // md:h-dvh: on desktop the sidebar is fixed so the full dynamic viewport height is correct.
-    // dvh (dynamic viewport height) shrinks when the keyboard opens on iOS, keeping
-    // the input visible above the keyboard.
-    <main className="flex flex-col overflow-hidden h-[calc(100dvh-52px)] md:h-dvh">
+    // h-dvh: full dynamic viewport height on mobile — dvh shrinks when the keyboard
+    // opens on iOS/Android, keeping the input visible. The ChatPanel renders an
+    // internal bottom spacer (md:hidden) to clear the fixed bottom nav bar.
+    // md:h-[calc(100dvh-56px)]: on desktop, Nav.tsx uses a sticky in-flow top bar
+    // (h-14 = 56px), so we subtract it so the chat fills exactly the remaining viewport.
+    <main className="flex flex-col overflow-hidden h-dvh md:h-[calc(100dvh-56px)]">
       <ChatPageContent initialQuery={initialQuery} openTutoring={openTutoring} />
     </main>
   );

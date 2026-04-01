@@ -1,14 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { AssistantInput } from "../../components/AssistantInput";
 import { NextTaskCard } from "../../components/NextTaskCard";
 import { TaskCard } from "../../components/TaskCard";
 import { TaskInputBox } from "../../components/TaskInputBox";
 import { useScheduleConfig } from "../../lib/stores/scheduleConfig";
 import { useCalendar } from "../../lib/stores/calendarStore";
+import { usePlanningStore } from "../../lib/stores/planningStore";
 import { useReminderStore } from "../../lib/reminder-store";
+import { useTaskStore } from "../../lib/task-store";
+import { useClasses } from "../../lib/stores/classStore";
+import { formatPlanningItemWindow, isPlanningItemOnDate } from "../../lib/planning-items";
 import {
   getClassesForToday,
   getCurrentWeekday,
@@ -16,7 +20,7 @@ import {
   formatTimeRange,
   getTodayDateString,
   isNoSchoolDay,
-  getAbOverrideForDate,
+  getScheduleDayOverrideForDate,
 } from "../../lib/schedule";
 import { getClassRotationDays } from "../../lib/class-rotation";
 import {
@@ -24,8 +28,9 @@ import {
   groupTasksByDisplayBucket,
   sortTasksByDueDate,
 } from "../../lib/tasks";
+import { resolveClassColor } from "../../lib/class-colors";
 import type { TaskDisplayBuckets } from "../../lib/tasks";
-import type { SchoolClass, SchoolDayCategory, StudentTask, Weekday } from "../../types";
+import type { SchoolClass, SchoolDayCategory, Weekday } from "../../types";
 import { TodayFocusCard } from "../../components/TodayFocusCard";
 
 const BUCKET_LABELS: Record<keyof TaskDisplayBuckets, string> = {
@@ -145,7 +150,7 @@ function TodaySchedule({
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-card">
         {entries.map(({ cls, time, status, startMin, endMin }, i) => {
-          const dotColor  = cls.color ?? "#d4edd9";
+          const dotColor  = resolveClassColor(cls.color);
           const isDone    = status === "done";
           const isCurrent = status === "current";
           const isNext    = status === "next";
@@ -230,121 +235,118 @@ function TodaySchedule({
   );
 }
 
+function formatPlanningDate(date: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function ActivitiesSnapshot({
+  loading,
+  todayItems,
+  upcomingEvents,
+}: {
+  loading: boolean;
+  todayItems: Array<{
+    id: string;
+    title: string;
+    subtitle: string;
+  }>;
+  upcomingEvents: Array<{
+    id: string;
+    title: string;
+    subtitle: string;
+  }>;
+}) {
+  return (
+    <section className="rounded-2xl border border-border bg-card p-6 shadow-card">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-foreground">Activities &amp; Events</h2>
+          <p className="mt-1 text-sm text-muted">
+            Personal commitments the assistant should plan around.
+          </p>
+        </div>
+        <Link
+          href="/activities"
+          className="text-xs font-medium text-accent-green-foreground underline underline-offset-2"
+        >
+          Manage
+        </Link>
+      </div>
+
+      {loading ? (
+        <p className="mt-4 text-sm text-muted">Loading activities...</p>
+      ) : todayItems.length === 0 && upcomingEvents.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-border bg-surface/50 px-4 py-5">
+          <p className="text-sm text-muted">
+            No activities or events saved yet. Add practices, work shifts, and appointments in{" "}
+            <Link href="/activities" className="font-medium text-accent-green-foreground underline underline-offset-2">
+              Activities &amp; Events
+            </Link>.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+              Today
+            </p>
+            <div className="mt-2 space-y-2">
+              {todayItems.length > 0 ? (
+                todayItems.map((item) => (
+                  <div key={item.id} className="rounded-xl border border-border bg-background px-4 py-3">
+                    <p className="text-sm font-medium text-foreground">{item.title}</p>
+                    <p className="mt-1 text-xs text-muted">{item.subtitle}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-xl border border-dashed border-border bg-background px-4 py-3">
+                  <p className="text-sm text-muted">Nothing scheduled from Activities today.</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+              Upcoming Events
+            </p>
+            <div className="mt-2 space-y-2">
+              {upcomingEvents.length > 0 ? (
+                upcomingEvents.map((item) => (
+                  <div key={item.id} className="rounded-xl border border-border bg-background px-4 py-3">
+                    <p className="text-sm font-medium text-foreground">{item.title}</p>
+                    <p className="mt-1 text-xs text-muted">{item.subtitle}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-xl border border-dashed border-border bg-background px-4 py-3">
+                  <p className="text-sm text-muted">No upcoming one-off events saved.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function DashboardPage() {
-  const [classes, setClasses] = useState<SchoolClass[]>([]);
-  const [tasks, setTasks] = useState<StudentTask[]>([]);
-  const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
-  const tasksLoading = false;
+  const { classes, importSchedule } = useClasses();
+  const { tasks, removingIds, loading: tasksLoading, addTask, completeTask, deleteTask } = useTaskStore();
   const { preferences: reminderPreferences } = useReminderStore();
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("scc-onboarding");
-      if (raw) {
-        const data = JSON.parse(raw) as { classes?: SchoolClass[] };
-        if (Array.isArray(data.classes)) setClasses(data.classes);
-      }
-    } catch {}
-    try {
-      const raw = localStorage.getItem("scc-tasks");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setTasks(parsed as StudentTask[]);
-      }
-    } catch {}
-  }, []);
-
-  const saveClasses = useCallback((updated: SchoolClass[]) => {
-    try {
-      const raw = localStorage.getItem("scc-onboarding");
-      const data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-      localStorage.setItem("scc-onboarding", JSON.stringify({ ...data, classes: updated }));
-    } catch {}
-  }, []);
-
-  const saveTasks = useCallback((updated: StudentTask[]) => {
-    try {
-      localStorage.setItem("scc-tasks", JSON.stringify(updated));
-    } catch {}
-  }, []);
-
-  const addClasses = useCallback(
-    (newClasses: Array<Omit<SchoolClass, "id">>) => {
-      setClasses((prev) => {
-        const withIds: SchoolClass[] = newClasses.map((c) => ({
-          ...c,
-          id: crypto.randomUUID(),
-        }));
-        const updated = [...prev, ...withIds];
-        saveClasses(updated);
-        return updated;
-      });
-    },
-    [saveClasses],
-  );
-
-  const addTask = useCallback(
-    async (partial: {
-      title: string;
-      description?: string;
-      classId?: string;
-      dueAt?: string;
-      type?: StudentTask["type"];
-      reminderAt?: string;
-      source?: StudentTask["source"];
-      status?: StudentTask["status"];
-    }): Promise<StudentTask> => {
-      const now = new Date().toISOString();
-      const task: StudentTask = {
-        id: crypto.randomUUID(),
-        status: partial.status ?? "todo",
-        source: partial.source ?? "manual",
-        createdAt: now,
-        updatedAt: now,
-        ...partial,
-      };
-      setTasks((prev) => {
-        const updated = [...prev, task];
-        saveTasks(updated);
-        return updated;
-      });
-      return task;
-    },
-    [saveTasks],
-  );
-
-  const completeTask = useCallback(
-    (id: string) => {
-      setTasks((prev) => {
-        const updated = prev.map((t) =>
-          t.id === id ? { ...t, status: "done" as const } : t,
-        );
-        saveTasks(updated);
-        return updated;
-      });
-    },
-    [saveTasks],
-  );
-
-  const deleteTask = useCallback(
-    (id: string) => {
-      setRemovingIds((prev) => new Set([...prev, id]));
-      setTimeout(() => {
-        setTasks((prev) => {
-          const updated = prev.filter((t) => t.id !== id);
-          saveTasks(updated);
-          return updated;
-        });
-        setRemovingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }, 500);
-    },
-    [saveTasks],
-  );
-  const { todayDayType, setTodayDayType } = useScheduleConfig();
+  const { items: planningItems, loading: planningLoading } = usePlanningStore();
+  const {
+    todayDayType,
+    setTodayDayType,
+    scheduleArchitecture,
+    rotationLabels,
+    isRotationSchedule,
+  } = useScheduleConfig();
   const { entries: calendarEntries, getEntryForDate } = useCalendar();
 
   const todayWeekday = getCurrentWeekday();
@@ -352,7 +354,7 @@ export default function DashboardPage() {
 
   // Calendar awareness
   const todayCalendarEntry = getEntryForDate(todayDateStr);
-  const calendarAbOverride = getAbOverrideForDate(calendarEntries, todayDateStr);
+  const calendarAbOverride = getScheduleDayOverrideForDate(calendarEntries, todayDateStr);
   const noSchoolToday = isNoSchoolDay(calendarEntries, todayDateStr);
 
   // Effective day type: calendar override takes priority over manual selection
@@ -361,10 +363,10 @@ export default function DashboardPage() {
   // A/B-aware class filtering, with no-school support
   const todayClasses = noSchoolToday
     ? []
-    : getClassesForToday(classes, todayWeekday, effectiveDayType);
+    : getClassesForToday(classes, todayWeekday, effectiveDayType, scheduleArchitecture);
 
-  // Whether any class uses A/B rotation (shows the day-type picker if so)
-  const hasAbClasses = classes.some((c) => getClassRotationDays(c).length > 0);
+  // Whether any class uses rotation labels (shows the day picker if configured for rotation)
+  const hasRotationClasses = classes.some((c) => getClassRotationDays(c).length > 0);
 
   const incompleteTasks = sortTasksByDueDate(getIncompleteTasks(tasks));
   const groupedTasks = groupTasksByDisplayBucket(incompleteTasks);
@@ -380,6 +382,33 @@ export default function DashboardPage() {
 
   const overdueCount = groupedTasks.overdue.length;
   const tasksWithDates = incompleteTasks.filter((t) => t.dueAt).length;
+  const todayPlanningItems = useMemo(
+    () =>
+      planningItems
+        .filter((item) => isPlanningItemOnDate(item, new Date()))
+        .map((item) => ({
+          id: item.id,
+          title: item.title,
+          subtitle:
+            item.kind === "recurring_activity"
+              ? formatPlanningItemWindow(item)
+              : `${item.date ?? "Today"} · ${formatPlanningItemWindow(item)}`,
+        })),
+    [planningItems],
+  );
+  const upcomingEvents = useMemo(
+    () =>
+      planningItems
+        .filter((item) => item.kind === "one_off_event" && Boolean(item.date) && item.date! >= todayDateStr)
+        .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))
+        .slice(0, 3)
+        .map((item) => ({
+          id: item.id,
+          title: item.title,
+          subtitle: `${formatPlanningDate(item.date!)} · ${formatPlanningItemWindow(item)}`,
+        })),
+    [planningItems, todayDateStr],
+  );
 
   const assistantPlaceholder = useMemo(() => {
     if (classes.length === 0) {
@@ -392,7 +421,7 @@ export default function DashboardPage() {
   }, [classes.length, incompleteTasks.length]);
 
   return (
-    <main className="flex min-h-screen flex-col">
+    <main className="flex min-h-dvh flex-col animate-page-enter">
       {/* ── Dark hero: greeting + assistant input ─────────────────── */}
       <div className="relative bg-hero px-6 py-8 md:px-8 md:py-14">
         {/* Subtle radial glow for depth */}
@@ -473,7 +502,7 @@ export default function DashboardPage() {
               classes={classes}
               reminderPreferences={reminderPreferences}
               onTaskConfirmed={addTask}
-              onSchedulesConfirmed={addClasses}
+              onSchedulesConfirmed={importSchedule}
               placeholder={assistantPlaceholder}
             />
           </div>
@@ -508,7 +537,7 @@ export default function DashboardPage() {
                 <div className="mb-2 text-xl">📚</div>
                 <p className="text-sm font-semibold text-foreground">Add your schedule</p>
                 <p className="mt-1 text-xs leading-relaxed text-muted">
-                  Type it in the box above — "Math Mon/Wed 9am with Mr. Chen" — and your assistant parses it instantly.
+                  Type it in the box above — &ldquo;Math Mon/Wed 9am with Mr. Chen&rdquo; — and your assistant parses it instantly.
                 </p>
               </div>
 
@@ -522,7 +551,7 @@ export default function DashboardPage() {
                   Log your first task
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-muted">
-                  Try "English essay due Friday" or "Bio test next Tuesday."
+                  Try &ldquo;English essay due Friday&rdquo; or &ldquo;Bio test next Tuesday.&rdquo;
                 </p>
               </Link>
 
@@ -543,7 +572,7 @@ export default function DashboardPage() {
             <div className="mt-4 flex flex-wrap items-start gap-2 rounded-xl border border-sidebar-accent/10 bg-sidebar-accent/5 px-4 py-3">
               <span className="shrink-0 text-xs font-semibold text-muted">Try saying:</span>
               <span className="text-xs italic text-foreground/70">
-                "AP Bio Mon/Wed/Fri 9–9:50, Calc Tues/Thurs 2–2:50, and I have a history essay due Friday."
+                &ldquo;AP Bio Mon/Wed/Fri 9&ndash;9:50, Calc Tues/Thurs 2&ndash;2:50, and I have a history essay due Friday.&rdquo;
               </span>
             </div>
           </section>
@@ -584,13 +613,13 @@ export default function DashboardPage() {
         )}
 
         {/* A/B day picker — only shown when rotation classes exist and school is in session */}
-        {hasAbClasses && !noSchoolToday && (
+        {isRotationSchedule && hasRotationClasses && !noSchoolToday && (
           <section>
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs font-semibold uppercase tracking-widest text-muted">
                 Today&apos;s rotation
               </span>
-              {(["A", "B", null] as const).map((type) => {
+              {[...rotationLabels, null].map((type) => {
                 const isCalendarSource = type !== null && calendarAbOverride === type;
                 return (
                   <button
@@ -602,8 +631,10 @@ export default function DashboardPage() {
                         ? type === "A"
                           ? "border-blue-400/50 bg-blue-500/20 text-blue-700"
                           : type === "B"
-                          ? "border-purple-400/50 bg-purple-500/20 text-purple-700"
-                          : "border-border bg-surface text-foreground"
+                            ? "border-purple-400/50 bg-purple-500/20 text-purple-700"
+                            : type === null
+                              ? "border-border bg-surface text-foreground"
+                              : "border-emerald-400/50 bg-emerald-500/20 text-emerald-700"
                         : "border-border bg-card text-muted hover:bg-surface"
                     }`}
                   >
@@ -655,15 +686,21 @@ export default function DashboardPage() {
           <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-5">
             <p className="text-sm text-muted">
               No classes scheduled for today.
-              {hasAbClasses && !effectiveDayType && (
+              {isRotationSchedule && hasRotationClasses && !effectiveDayType && (
                 <span>
                   {" "}
-                  If you have A/B day rotation, select today&apos;s rotation above to see your schedule.
+                  If you use a rotation schedule, select today&apos;s rotation above to see the right classes.
                 </span>
               )}
             </p>
           </div>
         )}
+
+        <ActivitiesSnapshot
+          loading={planningLoading}
+          todayItems={todayPlanningItems}
+          upcomingEvents={upcomingEvents}
+        />
 
         {/* Today Focus */}
         <TodayFocusCard />

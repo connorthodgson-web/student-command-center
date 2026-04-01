@@ -6,6 +6,8 @@ import { ClassStoreProvider } from "../lib/stores/classStore";
 import { ScheduleConfigProvider } from "../lib/stores/scheduleConfig";
 import { CalendarStoreProvider } from "../lib/stores/calendarStore";
 import { AutomationStoreProvider } from "../lib/stores/automationStore";
+import { PlanningStoreProvider } from "../lib/stores/planningStore";
+import { NoteStoreProvider } from "../lib/stores/noteStore";
 import { AuthProvider } from "../lib/auth-context";
 import { ThemeProvider } from "../lib/theme-context";
 
@@ -18,7 +20,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
             <CalendarStoreProvider>
               <TaskStoreProvider>
                 <ReminderStoreProvider>
-                  <AutomationStoreProvider>{children}</AutomationStoreProvider>
+                  <NoteStoreProvider>
+                    <AutomationStoreProvider>
+                      <PlanningStoreProvider>{children}</PlanningStoreProvider>
+                    </AutomationStoreProvider>
+                  </NoteStoreProvider>
                 </ReminderStoreProvider>
               </TaskStoreProvider>
             </CalendarStoreProvider>

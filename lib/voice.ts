@@ -37,6 +37,7 @@ type SpeechRecognitionLike = {
   onend: (() => void) | null;
   onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onspeechstart: (() => void) | null;
   onspeechend: (() => void) | null;
   start: () => void;
   stop: () => void;
@@ -79,25 +80,45 @@ export function useBrowserVoiceInput(onTranscript: (transcript: string) => void)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const transcriptReceivedRef = useRef(false);
   const hadErrorRef = useRef(false);
+  const stopRequestedRef = useRef(false);
+  const heardSpeechRef = useRef(false);
+  const sessionTimeoutRef = useRef<number | null>(null);
   const [isSupported, setIsSupported] = useState(false);
   const [state, setState] = useState<VoiceInputState>("idle");
   const [error, setError] = useState<string | null>(null);
 
+  const clearSessionTimeout = useCallback(() => {
+    if (sessionTimeoutRef.current !== null) {
+      window.clearTimeout(sessionTimeoutRef.current);
+      sessionTimeoutRef.current = null;
+    }
+  }, []);
+
   const cleanupRecognition = useCallback(() => {
+    clearSessionTimeout();
     recognitionRef.current = null;
     transcriptReceivedRef.current = false;
     hadErrorRef.current = false;
-  }, []);
+    stopRequestedRef.current = false;
+    heardSpeechRef.current = false;
+  }, [clearSessionTimeout]);
 
   const stop = useCallback(() => {
-    recognitionRef.current?.stop();
+    if (!recognitionRef.current) return;
+    stopRequestedRef.current = true;
+    recognitionRef.current.stop();
   }, []);
 
   const cancel = useCallback(() => {
-    recognitionRef.current?.abort();
+    if (recognitionRef.current) {
+      stopRequestedRef.current = true;
+      recognitionRef.current.abort();
+    }
+    clearSessionTimeout();
     cleanupRecognition();
+    setError(null);
     setState(isSupported ? "idle" : "unsupported");
-  }, [cleanupRecognition, isSupported]);
+  }, [cleanupRecognition, clearSessionTimeout, isSupported]);
 
   const start = useCallback(() => {
     const Recognition = getSpeechRecognitionConstructor();
@@ -107,34 +128,52 @@ export function useBrowserVoiceInput(onTranscript: (transcript: string) => void)
       return;
     }
 
-    recognitionRef.current?.abort();
+    if (recognitionRef.current) {
+      stopRequestedRef.current = true;
+      recognitionRef.current.abort();
+    }
     transcriptReceivedRef.current = false;
     hadErrorRef.current = false;
+    stopRequestedRef.current = false;
+    heardSpeechRef.current = false;
     setError(null);
 
     const recognition = new Recognition();
     recognition.continuous = false;
-    recognition.interimResults = true;
+    recognition.interimResults = false;
     recognition.lang = "en-US";
     recognition.maxAlternatives = 1;
 
     recognition.onstart = () => {
       setState("listening");
+      clearSessionTimeout();
+      sessionTimeoutRef.current = window.setTimeout(() => {
+        stopRequestedRef.current = true;
+        recognition.stop();
+      }, 12000);
+    };
+
+    recognition.onspeechstart = () => {
+      heardSpeechRef.current = true;
     };
 
     recognition.onspeechend = () => {
       setState("transcribing");
+      recognition.stop();
     };
 
     recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
+      const finalTranscript = Array.from(event.results)
+        .slice(event.resultIndex ?? 0)
+        .filter((result) => result.isFinal)
         .map((result) => result[0]?.transcript ?? "")
         .join(" ")
         .trim();
 
-      if (transcript) {
+      if (finalTranscript) {
+        clearSessionTimeout();
         transcriptReceivedRef.current = true;
-        onTranscript(transcript);
+        onTranscript(finalTranscript);
       }
     };
 
@@ -150,9 +189,15 @@ export function useBrowserVoiceInput(onTranscript: (transcript: string) => void)
         cleanupRecognition();
         return;
       }
-      if (!transcriptReceivedRef.current) {
+      if (stopRequestedRef.current) {
+        setState(nextState);
+      } else if (!transcriptReceivedRef.current) {
         setState("error");
-        setError("No transcript came through. Try again or type your message.");
+        setError(
+          heardSpeechRef.current
+            ? "I heard you, but the browser did not return a transcript. Please try again or type your message."
+            : "I didn't catch any speech before the browser stopped listening. Please try again or type your message.",
+        );
       } else {
         setState(nextState);
       }
@@ -161,7 +206,7 @@ export function useBrowserVoiceInput(onTranscript: (transcript: string) => void)
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [cleanupRecognition, onTranscript, state]);
+  }, [cleanupRecognition, clearSessionTimeout, onTranscript]);
 
   useEffect(() => {
     const supported = getSpeechRecognitionConstructor() !== null;

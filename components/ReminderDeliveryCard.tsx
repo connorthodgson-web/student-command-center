@@ -2,11 +2,56 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useReminderStore } from "../lib/reminder-store";
-import type { MessagingEndpoint } from "../types";
+import type { MessagingEndpoint, MessagingReadiness } from "../types";
+
+type EndpointResponse = {
+  data?: MessagingEndpoint[];
+  readiness?: MessagingReadiness;
+  error?: string;
+};
+
+type ReminderDeliveryRun = {
+  id: string;
+  reminderKind: "daily_summary" | "tonight_summary" | "due_soon";
+  deliveryChannel: "in_app" | "sms";
+  deliveryStatus: "processing" | "sent" | "skipped" | "failed";
+  deliveryTarget?: string;
+  reason?: string;
+  attemptedAt: string;
+};
+
+type ReminderRunResponse = {
+  data?: ReminderDeliveryRun[];
+  error?: string;
+};
+
+function formatAttemptTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatReminderKind(kind: ReminderDeliveryRun["reminderKind"]) {
+  switch (kind) {
+    case "daily_summary":
+      return "Daily summary";
+    case "tonight_summary":
+      return "Tonight summary";
+    case "due_soon":
+      return "Due soon";
+    default:
+      return kind;
+  }
+}
 
 export function ReminderDeliveryCard() {
   const { preferences, updatePreferences } = useReminderStore();
   const [endpoints, setEndpoints] = useState<MessagingEndpoint[]>([]);
+  const [readiness, setReadiness] = useState<MessagingReadiness | null>(null);
+  const [recentRuns, setRecentRuns] = useState<ReminderDeliveryRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,20 +78,38 @@ export function ReminderDeliveryCard() {
   useEffect(() => {
     let cancelled = false;
 
-    const loadEndpoints = async () => {
+    const loadMessagingState = async () => {
       setLoading(true);
+      setError(null);
+
       try {
-        const response = await fetch("/api/messaging/endpoints", { cache: "no-store" });
-        const json = (await response.json()) as { data?: MessagingEndpoint[]; error?: string };
-        if (!response.ok) {
-          throw new Error(json.error ?? "Failed to load messaging endpoints.");
+        const [endpointResponse, runsResponse] = await Promise.all([
+          fetch("/api/messaging/endpoints", { cache: "no-store" }),
+          fetch("/api/reminder-runner?limit=5", { cache: "no-store" }),
+        ]);
+
+        const endpointJson = (await endpointResponse.json()) as EndpointResponse;
+        if (!endpointResponse.ok) {
+          throw new Error(endpointJson.error ?? "Failed to load messaging endpoints.");
         }
+
+        const runsJson = (await runsResponse.json()) as ReminderRunResponse;
+        if (!runsResponse.ok) {
+          throw new Error(runsJson.error ?? "Failed to load reminder delivery history.");
+        }
+
         if (!cancelled) {
-          setEndpoints(json.data ?? []);
+          setEndpoints(endpointJson.data ?? []);
+          setReadiness(endpointJson.readiness ?? null);
+          setRecentRuns(runsJson.data ?? []);
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load messaging endpoints.");
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Failed to load reminder delivery settings.",
+          );
         }
       } finally {
         if (!cancelled) {
@@ -55,7 +118,7 @@ export function ReminderDeliveryCard() {
       }
     };
 
-    void loadEndpoints();
+    void loadMessagingState();
     return () => {
       cancelled = true;
     };
@@ -77,7 +140,7 @@ export function ReminderDeliveryCard() {
     <section className="rounded-2xl border border-border bg-surface/50 p-5">
       <p className="text-xs font-semibold uppercase tracking-widest text-muted">Reminder delivery</p>
       <p className="mt-2 text-sm text-muted">
-        Choose where future reminders and summaries should go once delivery runs through the messaging layer.
+        Choose where your assistant sends reminders and summaries.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -98,7 +161,7 @@ export function ReminderDeliveryCard() {
         <button
           type="button"
           onClick={() => void setDeliveryChannel("sms")}
-          disabled={saving || !verifiedSmsEndpoint}
+          disabled={saving || !verifiedSmsEndpoint || !readiness?.deliveryAvailable}
           className={`rounded-2xl border px-4 py-4 text-left transition ${
             preferences.deliveryChannel === "sms"
               ? "border-accent-green-foreground bg-accent-green/10"
@@ -107,9 +170,11 @@ export function ReminderDeliveryCard() {
         >
           <p className="text-sm font-semibold text-foreground">SMS</p>
           <p className="mt-1 text-xs text-muted">
-            {verifiedSmsEndpoint
+            {verifiedSmsEndpoint && readiness?.deliveryAvailable
               ? `Ready to use ${verifiedSmsEndpoint.address} for future reminder delivery.`
-              : "Add and verify a texting number first."}
+              : verifiedSmsEndpoint
+                ? "A number is verified, but live SMS delivery is still unavailable."
+                : "Add and verify a texting number first."}
           </p>
         </button>
       </div>
@@ -117,10 +182,54 @@ export function ReminderDeliveryCard() {
       <div className="mt-4 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted">
         {loading
           ? "Checking messaging availability..."
-          : verifiedSmsEndpoint
+          : verifiedSmsEndpoint && readiness?.deliveryAvailable
             ? `Messaging is available. Future reminders can target ${verifiedSmsEndpoint.address}.`
-            : "Messaging is not ready yet because there is no verified SMS endpoint."}
+            : verifiedSmsEndpoint
+              ? "Your number is verified, but outbound texting is not active yet. In-app reminders work now."
+              : "No verified SMS number yet. In-app reminders work now. Add a number in Messaging to enable SMS."}
       </div>
+
+      {recentRuns.length > 0 ? (
+        <div className="mt-4 rounded-xl border border-border bg-card px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-muted">
+            Recent delivery activity
+          </p>
+          <div className="mt-3 space-y-3">
+            {recentRuns.map((run) => (
+              <div key={run.id} className="flex items-start justify-between gap-3 text-sm">
+                <div>
+                  <p className="font-medium text-foreground">
+                    {formatReminderKind(run.reminderKind)} to{" "}
+                    {run.deliveryChannel === "sms" ? "SMS" : "in-app"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted">
+                    {formatAttemptTime(run.attemptedAt)}
+                    {run.deliveryTarget ? ` · ${run.deliveryTarget}` : ""}
+                    {run.reason ? ` · ${run.reason}` : ""}
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                    run.deliveryStatus === "sent"
+                      ? "border-accent-green-foreground/20 bg-accent-green/10 text-accent-green-foreground"
+                      : run.deliveryStatus === "failed"
+                        ? "border-accent-rose/20 bg-accent-rose/10 text-accent-rose-foreground"
+                        : "border-border bg-surface text-muted"
+                  }`}
+                >
+                  {run.deliveryStatus}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {readiness?.issues.length ? (
+        <div className="mt-4 rounded-xl border border-accent-rose/20 bg-accent-rose/10 px-4 py-3 text-sm text-accent-rose-foreground">
+          {readiness.issues.join(" ")}
+        </div>
+      ) : null}
 
       {error && (
         <p className="mt-3 rounded-xl border border-accent-rose/20 bg-accent-rose/10 px-4 py-3 text-sm text-accent-rose-foreground">

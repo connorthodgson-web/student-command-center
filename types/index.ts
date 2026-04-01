@@ -7,7 +7,21 @@ export type Weekday =
   | "saturday"
   | "sunday";
 
-export type RotationDay = "A" | "B";
+export type RotationDay = string;
+export type ScheduleDayLabel = string;
+
+export interface WeekdayScheduleArchitecture {
+  type: "weekday";
+}
+
+export interface RotationScheduleArchitecture {
+  type: "rotation";
+  rotationLabels: ScheduleDayLabel[];
+}
+
+export type ScheduleArchitecture =
+  | WeekdayScheduleArchitecture
+  | RotationScheduleArchitecture;
 
 /**
  * A single meeting slot for a class on a specific weekday.
@@ -65,11 +79,12 @@ export interface SchoolClass {
    */
   meetings?: ClassMeetingTime[];
   room?: string;
+  /** Normalized display color stored as a #RRGGBB hex string. */
   color?: string;
   /**
-   * A/B rotation membership for schools using rotating schedules.
+   * Rotation-day membership for schools using rotating schedules.
    * [] or undefined = standard weekday-based class.
-   * ["A"] = A-day only, ["B"] = B-day only, ["A","B"] = both A and B days.
+   * Examples: ["A"], ["B"], ["C"], ["A","C"].
    */
   rotationDays?: RotationDay[];
   /**
@@ -106,6 +121,16 @@ export interface StudentTask {
   source: TaskSource;
   type?: TaskType;
   reminderAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StudentNote {
+  id: string;
+  userId: string;
+  content: string;
+  title?: string;
+  classId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -305,8 +330,29 @@ export interface SchoolCalendarEntry {
   category: SchoolDayCategory;
   /** Optional human-readable label, e.g. "Spring Break", "Parent-Teacher Conferences" */
   label?: string;
-  /** When set, forces A or B day type for this specific date */
+  /** Generic schedule-day override for this date when using a rotation architecture. */
+  scheduleDayOverride?: ScheduleDayLabel;
+  /** Legacy A/B alias kept for compatibility with older stored calendar data. */
   abOverride?: "A" | "B";
+}
+
+export type PlanningItemKind = "recurring_activity" | "one_off_event";
+
+export interface PlanningItem {
+  id: string;
+  userId: string;
+  kind: PlanningItemKind;
+  title: string;
+  daysOfWeek?: Weekday[];
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  location?: string;
+  notes?: string;
+  isAllDay?: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ─── Automations ────────────────────────────────────────────────────────────
@@ -324,7 +370,7 @@ export type AutomationType =
   | "custom";           // Free-form automation set by the assistant
 
 /** Where the reminder/automation is delivered. */
-export type AutomationDeliveryChannel = "in_app" | "email" | "push";
+export type AutomationDeliveryChannel = "in_app" | "sms";
 
 /**
  * A single automation or reminder rule stored for the student.
@@ -362,7 +408,7 @@ export interface Automation {
 export interface CreateAutomationAction {
   type: "create_automation";
   automation: {
-    userId: string;
+    userId?: string;
     type: AutomationType;
     title: string;
     scheduleDescription: string;
@@ -372,6 +418,70 @@ export interface CreateAutomationAction {
     relatedClassId?: string;
     relatedTaskId?: string;
   };
+}
+
+export interface UpdateAutomationAction {
+  type: "update_automation";
+  automationId?: string;
+  automationTitle?: string;
+  updates: {
+    type?: AutomationType;
+    title?: string;
+    scheduleDescription?: string;
+    scheduleConfig?: Record<string, unknown>;
+    deliveryChannel?: AutomationDeliveryChannel;
+    enabled?: boolean;
+    relatedClassName?: string | null;
+    relatedTaskId?: string | null;
+  };
+}
+
+export interface DeleteAutomationAction {
+  type: "delete_automation";
+  automationId?: string;
+  automationTitle?: string;
+}
+
+export interface CreatePlanningItemAction {
+  type: "create_planning_item";
+  item: {
+    kind: PlanningItemKind;
+    title: string;
+    daysOfWeek?: Weekday[];
+    date?: string;
+    startTime?: string | null;
+    endTime?: string | null;
+    location?: string | null;
+    notes?: string | null;
+    isAllDay?: boolean;
+    enabled?: boolean;
+  };
+}
+
+export interface UpdatePlanningItemAction {
+  type: "update_planning_item";
+  itemId?: string;
+  itemTitle?: string;
+  itemKind?: PlanningItemKind;
+  updates: {
+    kind?: PlanningItemKind;
+    title?: string;
+    daysOfWeek?: Weekday[] | null;
+    date?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    location?: string | null;
+    notes?: string | null;
+    isAllDay?: boolean;
+    enabled?: boolean;
+  };
+}
+
+export interface DeletePlanningItemAction {
+  type: "delete_planning_item";
+  itemId?: string;
+  itemTitle?: string;
+  itemKind?: PlanningItemKind;
 }
 
 /**
@@ -420,7 +530,99 @@ export interface AddTaskFromChatAction {
   };
 }
 
-export type AssistantAction = CreateAutomationAction | CompleteTaskAction | UpdateTaskAction | AddTaskFromChatAction;
+export interface AddNoteAction {
+  type: "add_note";
+  note: {
+    content: string;
+    title?: string | null;
+    className?: string | null;
+  };
+}
+
+export interface UpdateNoteAction {
+  type: "update_note";
+  noteId?: string;
+  noteTitle?: string;
+  noteContent?: string;
+  updates: {
+    content?: string;
+    title?: string | null;
+    className?: string | null;
+  };
+}
+
+export interface DeleteNoteAction {
+  type: "delete_note";
+  noteId?: string;
+  noteTitle?: string;
+  noteContent?: string;
+}
+
+export interface UpdateClassAction {
+  type: "update_class";
+  classId?: string;
+  className?: string;
+  updates: {
+    name?: string;
+    teacherName?: string | null;
+    teacherEmail?: string | null;
+    room?: string | null;
+    color?: string | null;
+    days?: Weekday[] | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    rotationDays?: RotationDay[] | null;
+    scheduleLabel?: RotationDay | null;
+    notes?: string | null;
+    syllabusText?: string | null;
+    classNotes?: string | null;
+    isApCourse?: boolean | null;
+    apCourseKey?: string | null;
+  };
+}
+
+export interface DeleteClassAction {
+  type: "delete_class";
+  classId?: string;
+  className?: string;
+}
+
+/**
+ * Action to set up or add classes to the schedule directly from chat.
+ * Frontend saves the parsed classes to the local store.
+ */
+export interface SetupScheduleFromChatAction {
+  type: "setup_schedule";
+  classes: Array<{
+    name: string;
+    days: string[];
+    rotationDays?: RotationDay[];
+    scheduleLabel?: RotationDay;
+    startTime: string;
+    endTime: string;
+    teacherName?: string;
+    teacherEmail?: string;
+    room?: string;
+    color?: string;
+  }>;
+}
+
+export type AssistantAction =
+  | CreateAutomationAction
+  | UpdateAutomationAction
+  | DeleteAutomationAction
+  | CreatePlanningItemAction
+  | UpdatePlanningItemAction
+  | DeletePlanningItemAction
+  | CompleteTaskAction
+  | UpdateTaskAction
+  | AddTaskFromChatAction
+  | AddNoteAction
+  | UpdateNoteAction
+  | DeleteNoteAction
+  | UpdateClassAction
+  | DeleteClassAction
+  | SetupScheduleFromChatAction;
 
 export type ReminderDeliveryChannel = "in_app" | "sms";
 export type MessagingChannelType = "sms" | "web" | "email" | "test";
@@ -455,6 +657,26 @@ export interface MessagingEndpoint {
   updatedAt: string;
 }
 
+export type MessagingLaunchStatus =
+  | "missing"
+  | "unverified"
+  | "verified"
+  | "delivery_unavailable";
+
+export interface MessagingReadiness {
+  serviceRoleConfigured: boolean;
+  smsProviderConfigured: boolean;
+  verificationSupported: boolean;
+  deliveryAvailable: boolean;
+  deliveryStatusTrackingAvailable: boolean;
+  simulatedVerificationAvailable: boolean;
+  launchStatus: MessagingLaunchStatus;
+  statusLabel: string;
+  statusDetail: string;
+  issues: string[];
+  recommendedAddress?: string;
+}
+
 export interface MessagingConversation {
   id: string;
   userId: string;
@@ -486,6 +708,11 @@ export interface MessagingMessage {
   content: string;
   errorMessage?: string;
   metadata?: Record<string, unknown>;
+  attemptCount?: number;
+  lastAttemptedAt?: string;
+  lastErrorAt?: string;
+  providerLastStatus?: string;
+  providerStatusUpdatedAt?: string;
   sentAt?: string;
   deliveredAt?: string;
   createdAt: string;

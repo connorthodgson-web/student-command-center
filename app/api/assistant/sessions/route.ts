@@ -20,6 +20,8 @@ export async function GET(request: Request) {
   const classId = url.searchParams.get("classId") ?? undefined;
   const status = url.searchParams.get("status") ?? undefined;
   const tutoringMode = url.searchParams.get("tutoringMode") ?? undefined;
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Number.parseInt(limitParam, 10) : undefined;
 
   try {
     const data = await listAssistantSessions(auth.supabase, auth.userId, {
@@ -27,6 +29,7 @@ export async function GET(request: Request) {
       classId,
       status: status as "active" | "archived" | undefined,
       tutoringMode: tutoringMode as AssistantSessionInput["tutoringMode"],
+      limit: typeof limit === "number" && limit > 0 ? limit : undefined,
     });
 
     return NextResponse.json({ data });

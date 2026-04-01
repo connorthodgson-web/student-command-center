@@ -1,5 +1,7 @@
 // UI redesign pass
-import { formatDueDate, isPast } from "../lib/datetime";
+import Link from "next/link";
+import { formatDueDate, formatAssessmentDate, isPast } from "../lib/datetime";
+import { resolveClassColor } from "../lib/class-colors";
 import type { SchoolClass, StudentTask } from "../types";
 
 type TaskCardProps = {
@@ -61,7 +63,7 @@ export function TaskCard({ task, schoolClass, isOverdue = false, isRemoving = fa
         transition,
         transform: isRemoving ? "translateY(-2px)" : undefined,
         // Class color overrides the type-based Tailwind border color when available
-        ...(schoolClass?.color ? { borderLeftColor: schoolClass.color } : {}),
+        ...(schoolClass?.color ? { borderLeftColor: resolveClassColor(schoolClass.color) } : {}),
       }}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -90,7 +92,11 @@ export function TaskCard({ task, schoolClass, isOverdue = false, isRemoving = fa
             </h3>
             <p className="mt-1 text-xs text-muted">
               {schoolClass ? schoolClass.name : "General school task"}
-              {task.dueAt ? ` • ${formatDueDate(task.dueAt)}` : ""}
+              {task.dueAt
+                ? task.type === "test" || task.type === "quiz"
+                  ? ` • on ${formatAssessmentDate(task.dueAt)}`
+                  : ` • ${formatDueDate(task.dueAt)}`
+                : <span className="text-muted/50"> · no due date</span>}
             </p>
           </div>
         </div>
@@ -152,6 +158,28 @@ export function TaskCard({ task, schoolClass, isOverdue = false, isRemoving = fa
       {task.description ? (
         <p className="mt-3 text-sm leading-6 text-muted">{task.description}</p>
       ) : null}
+
+      {/* Study quick action — shown for test/quiz tasks that aren't done yet */}
+      {!isDone && (task.type === "test" || task.type === "quiz") && (
+        <div className="mt-3 flex items-center gap-2 opacity-60 transition-opacity group-hover:opacity-100">
+          <Link
+            href={`/chat?tutor=true&mode=quiz${task.classId ? `&classId=${task.classId}` : ""}&topic=${encodeURIComponent(task.title)}`}
+            className="flex items-center gap-1 rounded-lg border border-accent-purple/30 bg-accent-purple/5 px-2.5 py-1 text-[11px] font-medium text-accent-purple-foreground transition hover:bg-accent-purple/10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span>🎯</span>
+            Quiz Me
+          </Link>
+          <Link
+            href={`/chat?tutor=true&mode=review${task.classId ? `&classId=${task.classId}` : ""}&topic=${encodeURIComponent(task.title)}`}
+            className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-[11px] font-medium text-muted transition hover:border-sidebar-accent/30 hover:text-foreground"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span>📖</span>
+            Quick Review
+          </Link>
+        </div>
+      )}
     </article>
   );
 }

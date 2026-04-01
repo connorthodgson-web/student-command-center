@@ -1,6 +1,22 @@
 // UI redesign pass
+import Link from "next/link";
 import { formatDueDate } from "../lib/datetime";
-import type { SchoolClass, StudentTask } from "../types";
+import { resolveClassColor } from "../lib/class-colors";
+import type { SchoolClass, StudentTask, TutoringMode } from "../types";
+
+function studyModeForTask(type?: string): TutoringMode {
+  if (type === "test" || type === "quiz") return "quiz";
+  if (type === "reading") return "explain";
+  if (type === "project") return "study_plan";
+  return "homework_help";
+}
+
+function studyLabelForTask(type?: string): string {
+  if (type === "test" || type === "quiz") return "Quiz Me →";
+  if (type === "reading") return "Explain It →";
+  if (type === "project") return "Study Plan →";
+  return "Get Help →";
+}
 
 type NextTaskCardProps = {
   task?: StudentTask;
@@ -39,7 +55,7 @@ export function NextTaskCard({ task, schoolClass }: NextTaskCardProps) {
       {task ? (
         <div
           className={`mt-4 rounded-xl border border-border border-l-4 ${borderColor} bg-background p-4`}
-          style={schoolClass?.color ? { borderLeftColor: schoolClass.color } : undefined}
+          style={schoolClass?.color ? { borderLeftColor: resolveClassColor(schoolClass.color) } : undefined}
         >
           <h3 className="text-[15px] font-semibold text-foreground">{task.title}</h3>
           <p className="mt-1 text-sm text-muted">
@@ -50,13 +66,20 @@ export function NextTaskCard({ task, schoolClass }: NextTaskCardProps) {
             <p className="mt-3 text-sm leading-6 text-muted">{task.description}</p>
           ) : null}
 
-          {/* Non-functional CTA — placeholder for a future status change flow */}
-          <button
-            type="button"
-            className="mt-4 rounded-lg bg-accent-green px-4 py-2 text-sm font-medium text-accent-green-foreground transition-opacity hover:opacity-80"
-          >
-            Start working →
-          </button>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Link
+              href={`/chat?tutor=true&mode=${studyModeForTask(task.type)}${task.classId ? `&classId=${task.classId}` : ""}&topic=${encodeURIComponent(task.title)}`}
+              className="rounded-lg bg-accent-green px-4 py-2 text-sm font-medium text-accent-green-foreground transition-opacity hover:opacity-80"
+            >
+              {studyLabelForTask(task.type)}
+            </Link>
+            <Link
+              href={`/chat?q=${encodeURIComponent(`Help me with: ${task.title}`)}`}
+              className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted transition hover:bg-surface hover:text-foreground"
+            >
+              Ask assistant
+            </Link>
+          </div>
         </div>
       ) : (
         <div className="mt-4 rounded-xl border border-dashed border-border bg-background p-5 text-center">

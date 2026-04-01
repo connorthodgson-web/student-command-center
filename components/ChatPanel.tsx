@@ -1,15 +1,18 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useReminderStore } from "../lib/reminder-store";
+import { useAuth } from "../lib/auth-context";
 import { useCalendar } from "../lib/stores/calendarStore";
 import { useScheduleConfig } from "../lib/stores/scheduleConfig";
 import { useAutomations } from "../lib/stores/automationStore";
-import { getAbOverrideForDate, getTodayDateString } from "../lib/schedule";
+import { usePlanningStore } from "../lib/stores/planningStore";
+import { useClasses } from "../lib/stores/classStore";
+import { useNotes } from "../lib/stores/noteStore";
+import { matchNote } from "../lib/notes-data";
+import { getScheduleDayOverrideForDate, getTodayDateString } from "../lib/schedule";
 import { loadProfile } from "../lib/profile";
-import { loadActivities } from "../lib/activities";
-import { loadConstraints } from "../lib/constraints";
 import { renderContent } from "../lib/render-content";
+import { assembleTutoringContext } from "../lib/assistant-tutoring";
 import {
   canUseSpeechSynthesis,
   speakText,
@@ -17,36 +20,186 @@ import {
   useBrowserVoiceInput,
 } from "../lib/voice";
 import { formatDueDate } from "../lib/datetime";
-import type { AssistantAction, ChatMessage, SchoolClass, StudentTask, TutoringContext } from "../types";
-
-// ── Task matching ─────────────────────────────────────────────────────────────
+import { useTaskStore } from "../lib/task-store";
+import type {
+  AssistantAction,
+  PlanningItem,
+  PlanningItemKind,
+  AssistantSession,
+  AssistantSessionInput,
+  AssistantSessionMessage,
+  ChatMessage,
+  StudentNote,
+  StudentTask,
+  TutoringContext,
+  Weekday,
+} from "../types";
 
 function matchTask(
   tasks: StudentTask[],
   taskId?: string,
   taskTitle?: string,
 ): { match: StudentTask | null; ambiguous: boolean } {
-  const active = tasks.filter((t) => t.status !== "done");
+  const active = tasks.filter((task) => task.status !== "done");
 
   if (taskId) {
-    const byId = active.find((t) => t.id === taskId);
+    const byId = active.find((task) => task.id === taskId);
     if (byId) return { match: byId, ambiguous: false };
   }
 
   if (!taskTitle) return { match: null, ambiguous: false };
 
   const needle = taskTitle.trim().toLowerCase();
-  const exactMatches = active.filter((t) => t.title.toLowerCase() === needle);
+  const exactMatches = active.filter((task) => task.title.toLowerCase() === needle);
   if (exactMatches.length === 1) return { match: exactMatches[0], ambiguous: false };
   if (exactMatches.length > 1) return { match: null, ambiguous: true };
 
   const containsMatches = active.filter(
-    (t) => t.title.toLowerCase().includes(needle) || needle.includes(t.title.toLowerCase()),
+    (task) =>
+      task.title.toLowerCase().includes(needle) || needle.includes(task.title.toLowerCase()),
   );
   if (containsMatches.length === 1) return { match: containsMatches[0], ambiguous: false };
   if (containsMatches.length > 1) return { match: null, ambiguous: true };
 
   return { match: null, ambiguous: false };
+}
+
+function matchPlanningItem(
+  items: PlanningItem[],
+  itemId?: string,
+  itemTitle?: string,
+  itemKind?: PlanningItemKind,
+): { match: PlanningItem | null; ambiguous: boolean; candidates: PlanningItem[] } {
+  const scoped = itemKind ? items.filter((item) => item.kind === itemKind) : items;
+
+  if (itemId) {
+    const byId = scoped.find((item) => item.id === itemId);
+    if (byId) return { match: byId, ambiguous: false, candidates: [byId] };
+  }
+
+  if (!itemTitle) {
+    return { match: null, ambiguous: false, candidates: [] };
+  }
+
+  const needle = itemTitle.trim().toLowerCase();
+  const exactMatches = scoped.filter((item) => item.title.toLowerCase() === needle);
+  if (exactMatches.length === 1) {
+    return { match: exactMatches[0], ambiguous: false, candidates: exactMatches };
+  }
+  if (exactMatches.length > 1) {
+    return { match: null, ambiguous: true, candidates: exactMatches };
+  }
+
+  const containsMatches = scoped.filter(
+    (item) =>
+      item.title.toLowerCase().includes(needle) || needle.includes(item.title.toLowerCase()),
+  );
+  if (containsMatches.length === 1) {
+    return { match: containsMatches[0], ambiguous: false, candidates: containsMatches };
+  }
+  if (containsMatches.length > 1) {
+    return { match: null, ambiguous: true, candidates: containsMatches };
+  }
+
+  return { match: null, ambiguous: false, candidates: [] };
+}
+
+function formatPlanningKindLabel(kind: PlanningItemKind) {
+  return kind === "recurring_activity" ? "activity" : "event";
+}
+
+function formatPlanningCandidate(item: PlanningItem) {
+  return `- **${item.title}** (${formatPlanningKindLabel(item.kind)})`;
+}
+
+function formatNoteCandidate(note: StudentNote) {
+  const label = note.title?.trim() ? note.title : note.content;
+  return `- **${label}**`;
+}
+
+function formatNoteUpdateSummary(
+  note: StudentNote,
+  updates: {
+    content?: string;
+    title?: string | null;
+  },
+) {
+  const changeParts: string[] = [];
+
+  if (updates.title !== undefined) {
+    changeParts.push(note.title ? `title set to **${note.title}**` : "title cleared");
+  }
+
+  if (updates.content !== undefined) {
+    changeParts.push("content updated");
+  }
+
+  return changeParts;
+}
+
+function formatPlanningUpdateSummary(
+  item: PlanningItem,
+  originalTitle: string,
+  updates: {
+    kind?: PlanningItemKind;
+    title?: string;
+    daysOfWeek?: Weekday[] | null;
+    date?: string | null;
+    startTime?: string | null;
+    endTime?: string | null;
+    location?: string | null;
+    notes?: string | null;
+    isAllDay?: boolean;
+    enabled?: boolean;
+  },
+) {
+  const changeParts: string[] = [];
+
+  if (updates.title !== undefined && item.title !== originalTitle) {
+    changeParts.push(`renamed to **${item.title}**`);
+  }
+  if (updates.daysOfWeek !== undefined && item.kind === "recurring_activity" && item.daysOfWeek?.length) {
+    changeParts.push(`days set to **${item.daysOfWeek.join(", ")}**`);
+  }
+  if (updates.date !== undefined) {
+    if (item.kind === "one_off_event" && item.date) {
+      changeParts.push(`date set to **${item.date}**`);
+    } else if (updates.date === null) {
+      changeParts.push("date cleared");
+    }
+  }
+  if (updates.isAllDay !== undefined && item.isAllDay) {
+    changeParts.push("set to **all day**");
+  } else if ((updates.startTime !== undefined || updates.endTime !== undefined) && item.startTime && item.endTime) {
+    changeParts.push(`time set to **${item.startTime}-${item.endTime}**`);
+  } else if (updates.startTime !== undefined && item.startTime) {
+    changeParts.push(`start time set to **${item.startTime}**`);
+  } else if (
+    (updates.startTime === null || updates.endTime === null) &&
+    !item.startTime &&
+    !item.endTime
+  ) {
+    changeParts.push("time cleared");
+  }
+  if (updates.location !== undefined) {
+    if (item.location) {
+      changeParts.push(`location set to **${item.location}**`);
+    } else if (updates.location === null) {
+      changeParts.push("location cleared");
+    }
+  }
+  if (updates.notes !== undefined) {
+    if (item.notes) {
+      changeParts.push("notes updated");
+    } else if (updates.notes === null) {
+      changeParts.push("notes cleared");
+    }
+  }
+  if (updates.enabled !== undefined) {
+    changeParts.push(item.enabled ? "enabled" : "disabled");
+  }
+
+  return changeParts;
 }
 
 // ── Contextual suggestions ────────────────────────────────────────────────────
@@ -121,6 +274,7 @@ type AttachmentUploadState = {
   file: File;
   status: "uploading" | "ready" | "failed";
   id?: string;
+  error?: string;
 };
 
 // ── Initial greeting ──────────────────────────────────────────────────────────
@@ -133,17 +287,37 @@ const INITIAL_GREETING: ChatMessage = {
   createdAt: new Date().toISOString(),
 };
 
+function getSessionStorageKey(tutoringContext?: TutoringContext) {
+  return tutoringContext ? "scc-chat-session:tutoring" : "scc-chat-session:web_chat";
+}
+
+function mapStoredSessionMessage(message: AssistantSessionMessage): ChatMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: message.createdAt,
+  };
+}
+
 // ── ChatPanel ─────────────────────────────────────────────────────────────────
 
 export function ChatPanel({
   initialQuery,
+  preferredSessionId,
   tutoringContext,
+  onTutoringContextChange,
+  onSessionChange,
   onOpenTutoring,
 }: {
   initialQuery?: string;
+  preferredSessionId?: string | null;
   tutoringContext?: TutoringContext;
+  onTutoringContextChange?: (updates: Partial<TutoringContext>) => void;
+  onSessionChange?: (session: AssistantSession | null) => void;
   onOpenTutoring?: () => void;
 }) {
+  const { user, loading: authLoading } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_GREETING]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -153,51 +327,137 @@ export function ChatPanel({
   const [speechSupported, setSpeechSupported] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [attachment, setAttachment] = useState<AttachmentUploadState | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const profile = loadProfile();
-  const activities = loadActivities();
-  const constraints = loadConstraints();
-  const [tasks, setTasks] = useState<StudentTask[]>([]);
-  const [classes, setClasses] = useState<SchoolClass[]>([]);
-  const { preferences: reminderPreferences } = useReminderStore();
+  const { tasks, addTask, updateTask, completeTask: completeStoredTask, reloadTasks } = useTaskStore();
+  const { classes, addClasses, reloadClasses } = useClasses();
+  const { notes, addNote, updateNote, deleteNote, reloadNotes } = useNotes();
   const { entries: calendarEntries } = useCalendar();
-  const { todayDayType } = useScheduleConfig();
-  const { addAutomation } = useAutomations();
+  const { todayDayType, scheduleArchitecture } = useScheduleConfig();
+  const { addAutomation, reloadAutomations } = useAutomations();
+  const {
+    items: planningItems,
+    addItem: addPlanningItem,
+    updateItem: updatePlanningItem,
+    removeItem: removePlanningItem,
+    reloadItems: reloadPlanningItems,
+  } = usePlanningStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const initialSendRef = useRef(false);
+  const sessionStorageKey = useMemo(
+    () => getSessionStorageKey(tutoringContext),
+    [tutoringContext],
+  );
 
   useEffect(() => {
     setSpeechSupported(canUseSpeechSynthesis());
   }, []);
 
-  // Load real student data and chat history from localStorage on mount
+  // Restore the latest persisted thread. Prefer server-backed sessions when signed in,
+  // and fall back to local-only history if we don't have an authenticated user yet.
   useEffect(() => {
-    try {
-      const rawTasks = localStorage.getItem("scc-tasks");
-      if (rawTasks) {
-        const parsed = JSON.parse(rawTasks);
-        if (Array.isArray(parsed)) setTasks(parsed as StudentTask[]);
+    if (authLoading) return;
+
+    let cancelled = false;
+
+    const hydrateMessagesForSession = async (candidateSessionId: string) => {
+      const response = await fetch(`/api/assistant/sessions/${candidateSessionId}/messages`, {
+        cache: "no-store",
+      });
+      const json = (await response.json()) as {
+        data?: AssistantSessionMessage[];
+        error?: string;
+      };
+
+      if (!response.ok || !json.data) {
+        throw new Error(json.error ?? "Failed to load session messages.");
       }
-    } catch {}
-    try {
-      const rawOnboarding = localStorage.getItem("scc-onboarding");
-      if (rawOnboarding) {
-        const data = JSON.parse(rawOnboarding) as { classes?: SchoolClass[] };
-        setClasses(data.classes ?? []);
+
+      const hydratedMessages = json.data.map(mapStoredSessionMessage);
+      if (!cancelled) {
+        setSessionId(candidateSessionId);
+        setMessages(hydratedMessages.length > 0 ? hydratedMessages : [INITIAL_GREETING]);
       }
-    } catch {}
-    try {
-      const rawHistory = localStorage.getItem("scc-chat-history");
-      if (rawHistory) {
-        const parsed = JSON.parse(rawHistory);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed as ChatMessage[]);
+      return true;
+    };
+
+    const loadPersistedThread = async () => {
+      if (initialQuery) {
+        localStorage.removeItem(sessionStorageKey);
+        localStorage.removeItem("scc-chat-history");
+        setSessionId(null);
+        setMessages([INITIAL_GREETING]);
+        onSessionChange?.(null);
+        return;
+      }
+
+      const storedSessionId = localStorage.getItem(sessionStorageKey);
+      const candidateSessionIds = Array.from(
+        new Set([preferredSessionId, storedSessionId].filter((value): value is string => Boolean(value))),
+      );
+
+      if (user) {
+        for (const candidateSessionId of candidateSessionIds) {
+          try {
+            const didHydrate = await hydrateMessagesForSession(candidateSessionId);
+            if (didHydrate) return;
+          } catch {
+            // Try the next candidate, then fall back to latest durable session or local history.
+          }
+        }
+
+        try {
+          const channel = tutoringContext ? "tutoring" : "web_chat";
+          const response = await fetch(
+            `/api/assistant/sessions?channel=${channel}&status=active&limit=1`,
+            { cache: "no-store" },
+          );
+          const json = (await response.json()) as {
+            data?: AssistantSession[];
+            error?: string;
+          };
+
+          const latestSessionId = json.data?.[0]?.id;
+          if (response.ok && latestSessionId) {
+            const didHydrate = await hydrateMessagesForSession(latestSessionId);
+            if (didHydrate) {
+              onSessionChange?.(json.data?.[0] ?? null);
+              return;
+            }
+          }
+        } catch {
+          // Fall back to local history below if the latest durable session can't be restored.
         }
       }
-    } catch {}
-  }, []);
+
+      try {
+        const rawHistory = localStorage.getItem("scc-chat-history");
+        if (!rawHistory) {
+          if (!cancelled) {
+            setMessages([INITIAL_GREETING]);
+          }
+          return;
+        }
+
+        const parsed = JSON.parse(rawHistory);
+        if (Array.isArray(parsed) && parsed.length > 0 && !cancelled) {
+          setMessages(parsed as ChatMessage[]);
+        }
+      } catch {
+        if (!cancelled) {
+          setMessages([INITIAL_GREETING]);
+        }
+      }
+    };
+
+    void loadPersistedThread();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, initialQuery, onSessionChange, preferredSessionId, sessionStorageKey, tutoringContext, user]);
 
   // Persist chat history on every change (capped at 50 messages)
   useEffect(() => {
@@ -206,15 +466,15 @@ export function ChatPanel({
     } catch {}
   }, [messages]);
 
-  const completeTask = useCallback(async (id: string) => {
-    setTasks((prev) => {
-      const updated = prev.map((t) => (t.id === id ? { ...t, status: "done" as const } : t));
-      try {
-        localStorage.setItem("scc-tasks", JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-  }, []);
+  useEffect(() => {
+    try {
+      if (sessionId) {
+        localStorage.setItem(sessionStorageKey, sessionId);
+      } else {
+        localStorage.removeItem(sessionStorageKey);
+      }
+    } catch {}
+  }, [sessionId, sessionStorageKey]);
 
   const {
     state: voiceState,
@@ -224,6 +484,7 @@ export function ChatPanel({
     isTranscribing,
     start: startListening,
     stop: stopListening,
+    cancel: cancelListening,
     clearError: clearVoiceError,
   } = useBrowserVoiceInput((transcript) => {
     setLastTranscript(transcript);
@@ -242,6 +503,25 @@ export function ChatPanel({
       }),
     [classes.length, activeTasks.length, tutoringContext],
   );
+  const activeTutoringSummary = useMemo(() => {
+    if (!tutoringContext) return null;
+
+    return assembleTutoringContext({
+      message: [tutoringContext.topic, tutoringContext.goal, tutoringContext.studyFocus]
+        .filter(Boolean)
+        .join(" "),
+      classes,
+      tasks,
+      attachments: [],
+      tutoringContext,
+      classId: tutoringContext.classId,
+      taskId: tutoringContext.taskId,
+    });
+  }, [classes, tasks, tutoringContext]);
+  const visibleTutoringGroundingStatus =
+    tutoringContext?.attachmentIds?.length && tutoringContext.attachmentIds.length > 0
+      ? "uploaded_materials"
+      : activeTutoringSummary?.groundingStatus;
 
   useEffect(() => {
     if (initialQuery && !initialSendRef.current) {
@@ -277,10 +557,15 @@ export function ChatPanel({
         const formData = new FormData();
         formData.append("file", file);
         formData.append("title", file.name);
-        formData.append(
-          "attachmentType",
-          file.type.startsWith("image/") ? "image" : "file",
-        );
+        if (file.type.startsWith("image/")) {
+          formData.append("attachmentType", "image");
+        }
+        if (tutoringContext?.classId) {
+          formData.append("classId", tutoringContext.classId);
+        }
+        if (sessionId) {
+          formData.append("sessionId", sessionId);
+        }
 
         const res = await fetch("/api/assistant/attachments", {
           method: "POST",
@@ -290,16 +575,41 @@ export function ChatPanel({
         if (res.ok) {
           const json = (await res.json()) as { data?: { id: string } };
           setAttachment((prev) =>
-            prev ? { ...prev, status: "ready", id: json.data?.id } : null,
+            prev ? { ...prev, status: "ready", id: json.data?.id, error: undefined } : null,
           );
+          if (tutoringContext && json.data?.id) {
+            const attachmentIds = tutoringContext.attachmentIds ?? [];
+            if (!attachmentIds.includes(json.data.id)) {
+              onTutoringContextChange?.({
+                attachmentIds: [...attachmentIds, json.data.id],
+              });
+            }
+          }
         } else {
-          setAttachment((prev) => (prev ? { ...prev, status: "failed" } : null));
+          const json = (await res.json().catch(() => ({}))) as { error?: string };
+          setAttachment((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "failed",
+                  error: json.error ?? "This file could not be uploaded.",
+                }
+              : null,
+          );
         }
-      } catch {
-        setAttachment((prev) => (prev ? { ...prev, status: "failed" } : null));
+      } catch (error) {
+        setAttachment((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "failed",
+                error: error instanceof Error ? error.message : "This file could not be uploaded.",
+              }
+            : null,
+        );
       }
     },
-    [],
+    [onTutoringContextChange, sessionId, tutoringContext],
   );
 
   // ── TTS ───────────────────────────────────────────────────────────────────
@@ -325,11 +635,11 @@ export function ChatPanel({
     async (text: string, currentMessages: ChatMessage[]) => {
       if (!text || isLoading) return;
 
-      stopListening();
+      cancelListening();
 
       // Build the display message — include attachment name if present
       const displayText =
-        attachment && attachment.status === "failed"
+        attachment && attachment.status === "ready"
           ? `${text}\n\n[Attached: ${attachment.file.name}]`
           : text;
 
@@ -357,6 +667,18 @@ export function ChatPanel({
       setAttachment(null);
 
       try {
+        const sessionPayload: AssistantSessionInput = {
+          ...(sessionId ? { id: sessionId } : {}),
+          channel: tutoringContext ? "tutoring" : "web_chat",
+          classId: tutoringContext?.classId,
+          taskId: tutoringContext?.taskId,
+          tutoringMode: tutoringContext?.mode,
+          topic: tutoringContext?.topic,
+          goal: tutoringContext?.goal,
+          studyFocus: tutoringContext?.studyFocus,
+          tutoringContext,
+        };
+
         // Build the full messages array: history + new user message
         const apiMessages = [
           ...currentMessages
@@ -367,7 +689,7 @@ export function ChatPanel({
 
         // Compute effective day type client-side for schedule context
         const todayDateStr = getTodayDateString();
-        const calendarAbOverride = getAbOverrideForDate(calendarEntries, todayDateStr);
+        const calendarAbOverride = getScheduleDayOverrideForDate(calendarEntries, todayDateStr);
         const effectiveDayType = calendarAbOverride ?? todayDayType;
 
         const response = await fetch("/api/ai/chat", {
@@ -378,8 +700,18 @@ export function ChatPanel({
             classes,
             tasks,
             effectiveDayType,
+            scheduleArchitecture,
             calendarEntries,
+            attachmentIds:
+              sentAttachment?.status === "ready" && sentAttachment.id
+                ? Array.from(
+                    new Set([...(tutoringContext?.attachmentIds ?? []), sentAttachment.id]),
+                  )
+                : tutoringContext?.attachmentIds,
+            classId: tutoringContext?.classId,
+            taskId: tutoringContext?.taskId,
             tutoringContext,
+            session: sessionPayload,
           }),
         });
 
@@ -397,11 +729,37 @@ export function ChatPanel({
         const json = (await response.json()) as {
           data?: ChatMessage;
           action?: AssistantAction;
+          session?: AssistantSession | null;
+          sync?: Array<"tasks" | "classes" | "notes" | "planningItems" | "automations">;
           error?: string;
         };
 
         if (json.error || !json.data) {
           throw new Error(json.error ?? "No response from AI.");
+        }
+
+        if (json.session?.id) {
+          setSessionId(json.session.id);
+          onSessionChange?.(json.session);
+        }
+
+        if (json.sync?.length) {
+          const reloads = json.sync.map((target) => {
+            switch (target) {
+              case "tasks":
+                return reloadTasks();
+              case "classes":
+                return reloadClasses();
+              case "notes":
+                return reloadNotes();
+              case "planningItems":
+                return reloadPlanningItems();
+              case "automations":
+                return reloadAutomations();
+            }
+          });
+
+          await Promise.allSettled(reloads);
         }
 
         const assistantMessage: ChatMessage = json.data;
@@ -423,7 +781,7 @@ export function ChatPanel({
 
           if (isValid) {
             try {
-              addAutomation(auto);
+              await addAutomation(auto);
               assistantMessage.content =
                 assistantMessage.content.trimEnd() +
                 "\n\nSaved to your [Automations](/automations).";
@@ -439,13 +797,227 @@ export function ChatPanel({
           }
         }
 
+        if (json.action?.type === "create_planning_item") {
+          try {
+            await addPlanningItem({
+              ...json.action.item,
+              enabled: json.action.item.enabled ?? true,
+              startTime: json.action.item.startTime ?? undefined,
+              endTime: json.action.item.endTime ?? undefined,
+              location: json.action.item.location ?? undefined,
+              notes: json.action.item.notes ?? undefined,
+            });
+            assistantMessage.content =
+              assistantMessage.content.trimEnd() +
+              "\n\nSaved to your [Activities](/activities).";
+          } catch {
+            assistantMessage.content =
+              assistantMessage.content.trimEnd() +
+              "\n\n(I couldn't save that planning item automatically. Try again in [Activities](/activities).)";
+          }
+        }
+
+        if (json.action?.type === "update_planning_item") {
+          const { match, ambiguous, candidates } = matchPlanningItem(
+            planningItems,
+            json.action.itemId,
+            json.action.itemTitle,
+            json.action.itemKind,
+          );
+
+          if (match) {
+            try {
+              const originalTitle = match.title;
+              const patched = await updatePlanningItem(match.id, {
+                ...(json.action.updates.kind !== undefined ? { kind: json.action.updates.kind } : {}),
+                ...(json.action.updates.title !== undefined ? { title: json.action.updates.title } : {}),
+                ...(json.action.updates.daysOfWeek !== undefined
+                  ? { daysOfWeek: json.action.updates.daysOfWeek }
+                  : {}),
+                ...(json.action.updates.date !== undefined ? { date: json.action.updates.date } : {}),
+                ...(json.action.updates.startTime !== undefined
+                  ? { startTime: json.action.updates.startTime }
+                  : {}),
+                ...(json.action.updates.endTime !== undefined
+                  ? { endTime: json.action.updates.endTime }
+                  : {}),
+                ...(json.action.updates.location !== undefined
+                  ? { location: json.action.updates.location }
+                  : {}),
+                ...(json.action.updates.notes !== undefined ? { notes: json.action.updates.notes } : {}),
+                ...(json.action.updates.isAllDay !== undefined
+                  ? { isAllDay: json.action.updates.isAllDay }
+                  : {}),
+                ...(json.action.updates.enabled !== undefined
+                  ? { enabled: json.action.updates.enabled }
+                  : {}),
+              });
+
+              const changeParts = formatPlanningUpdateSummary(
+                patched,
+                originalTitle,
+                json.action.updates,
+              );
+              const kindLabel = formatPlanningKindLabel(patched.kind);
+              assistantMessage.content = changeParts.length > 0
+                ? `Updated your ${kindLabel} — **${patched.title}**: ${changeParts.join(", ")}.`
+                : `Updated your ${kindLabel} — **${patched.title}** is saved.`;
+            } catch {
+              assistantMessage.content =
+                `I found **${match.title}**, but I ran into an issue saving that change. Please try again or edit it in [Activities](/activities).`;
+            }
+          } else if (ambiguous) {
+            const list = candidates.slice(0, 5).map(formatPlanningCandidate).join("\n");
+            assistantMessage.content =
+              `I found a few saved activities or events that could match — which one did you mean?\n\n${list}`;
+          } else {
+            const itemLabel = json.action.itemTitle ? `"${json.action.itemTitle}"` : "that item";
+            assistantMessage.content =
+              `I couldn't find ${itemLabel} in your saved activities or events. Can you describe it a little differently?`;
+          }
+        }
+
+        if (json.action?.type === "delete_planning_item") {
+          const { match, ambiguous, candidates } = matchPlanningItem(
+            planningItems,
+            json.action.itemId,
+            json.action.itemTitle,
+            json.action.itemKind,
+          );
+
+          if (match) {
+            try {
+              await removePlanningItem(match.id);
+              assistantMessage.content =
+                `Done - I removed **${match.title}** from your ${formatPlanningKindLabel(match.kind)} list.`;
+            } catch {
+              assistantMessage.content =
+                `I found **${match.title}**, but I couldn't remove it right now. Please try again or delete it in [Activities](/activities).`;
+            }
+          } else if (ambiguous) {
+            const list = candidates.slice(0, 5).map(formatPlanningCandidate).join("\n");
+            assistantMessage.content =
+              `I found a few saved activities or events that could match — which one should I remove?\n\n${list}`;
+          } else {
+            const itemLabel = json.action.itemTitle ? `"${json.action.itemTitle}"` : "that item";
+            assistantMessage.content =
+              `I couldn't find ${itemLabel} in your saved activities or events. Can you describe it a little differently?`;
+          }
+        }
+
+        if (json.action?.type === "add_note") {
+          const { note } = json.action;
+          let classId: string | undefined;
+          if (note.className?.trim()) {
+            const needle = note.className.toLowerCase();
+            classId = classes.find(
+              (schoolClass) =>
+                schoolClass.name.toLowerCase().includes(needle) ||
+                needle.includes(schoolClass.name.toLowerCase()),
+            )?.id;
+          }
+
+          try {
+            const savedNote = await addNote({
+              content: note.content,
+              title: note.title ?? undefined,
+              classId,
+            });
+            assistantMessage.content = classId || !note.className
+              ? `Done - I saved that to your notes${savedNote.title ? ` as **${savedNote.title}**` : ""}.`
+              : `Done - I saved that to your notes${savedNote.title ? ` as **${savedNote.title}**` : ""}. I couldn't confidently match "${note.className}" to one of your saved classes, so I left it uncategorized.`;
+          } catch {
+            assistantMessage.content =
+              "I understood the note, but I ran into an issue saving it. Please try again.";
+          }
+        }
+
+        if (json.action?.type === "update_note") {
+          const { match, ambiguous, candidates } = matchNote(notes, {
+            noteId: json.action.noteId,
+            noteTitle: json.action.noteTitle,
+            noteContent: json.action.noteContent,
+          });
+
+          if (match) {
+            let classId: string | null | undefined;
+            if (json.action.updates.className !== undefined) {
+              if (json.action.updates.className === null) {
+                classId = null;
+              } else {
+                const needle = json.action.updates.className.toLowerCase();
+                classId =
+                  classes.find(
+                    (schoolClass) =>
+                      schoolClass.name.toLowerCase().includes(needle) ||
+                      needle.includes(schoolClass.name.toLowerCase()),
+                  )?.id ?? match.classId ?? null;
+              }
+            }
+
+            try {
+              const patched = await updateNote(match.id, {
+                ...(json.action.updates.content !== undefined
+                  ? { content: json.action.updates.content }
+                  : {}),
+                ...(json.action.updates.title !== undefined
+                  ? { title: json.action.updates.title }
+                  : {}),
+                ...(json.action.updates.className !== undefined ? { classId } : {}),
+              });
+              const changeParts = formatNoteUpdateSummary(patched, {
+                content: json.action.updates.content,
+                title: json.action.updates.title,
+              });
+              assistantMessage.content = changeParts.length > 0
+                ? `Updated your note${patched.title ? ` - **${patched.title}**` : ""}: ${changeParts.join(", ")}.`
+                : `Updated your note${patched.title ? ` - **${patched.title}**` : ""}.`;
+            } catch {
+              assistantMessage.content =
+                `I found that note, but I ran into an issue saving the update. Please try again.`;
+            }
+          } else if (ambiguous) {
+            const list = candidates.slice(0, 5).map(formatNoteCandidate).join("\n");
+            assistantMessage.content =
+              `I found a few notes that could match - which one did you mean?\n\n${list}`;
+          } else {
+            assistantMessage.content =
+              "I couldn't find that note in your saved memory. Can you quote a bit of it for me?";
+          }
+        }
+
+        if (json.action?.type === "delete_note") {
+          const { match, ambiguous, candidates } = matchNote(notes, {
+            noteId: json.action.noteId,
+            noteTitle: json.action.noteTitle,
+            noteContent: json.action.noteContent,
+          });
+
+          if (match) {
+            try {
+              await deleteNote(match.id);
+              assistantMessage.content = `Done - I deleted that note${match.title ? ` (**${match.title}**)` : ""}.`;
+            } catch {
+              assistantMessage.content =
+                "I found that note, but I couldn't delete it right now. Please try again.";
+            }
+          } else if (ambiguous) {
+            const list = candidates.slice(0, 5).map(formatNoteCandidate).join("\n");
+            assistantMessage.content =
+              `I found a few notes that could match - which one should I delete?\n\n${list}`;
+          } else {
+            assistantMessage.content =
+              "I couldn't find that note in your saved memory. Can you describe it a little differently?";
+          }
+        }
+
         // Handle complete_task action
         if (json.action?.type === "complete_task") {
           const { taskId, taskTitle } = json.action;
           const { match, ambiguous } = matchTask(tasks, taskId, taskTitle);
 
           if (match) {
-            await completeTask(match.id);
+            await completeStoredTask(match.id);
             assistantMessage.content = `Done — I marked **${match.title}** as complete.`;
           } else if (ambiguous) {
             const needle = (taskTitle ?? "").toLowerCase();
@@ -470,30 +1042,46 @@ export function ChatPanel({
           const { match, ambiguous } = matchTask(tasks, taskId, taskTitle);
 
           if (match) {
-            // Build patched task and write to localStorage first — no auth required
-            const patched: StudentTask = {
-              ...match,
-              ...(updates.title ? { title: updates.title } : {}),
-              ...(updates.dueAt !== undefined ? { dueAt: updates.dueAt ?? undefined } : {}),
-              ...(updates.description !== undefined
-                ? { description: updates.description ?? undefined }
-                : {}),
-              updatedAt: new Date().toISOString(),
-            };
-            setTasks((prev) => {
-              const updated = prev.map((t) => (t.id === match.id ? patched : t));
-              try {
-                localStorage.setItem("scc-tasks", JSON.stringify(updated));
-              } catch {}
-              return updated;
-            });
-            // Attach confirmation card
-            assistantMessage.actionResult = {
-              type: "task_updated",
-              title: patched.title,
-              dueAt: patched.dueAt,
-            };
-            // TODO: Sync to Supabase via PATCH /api/tasks when auth context is available
+            try {
+              const patched = await updateTask(match.id, {
+                ...(updates.title ? { title: updates.title } : {}),
+                ...(updates.dueAt !== undefined ? { dueAt: updates.dueAt ?? undefined } : {}),
+                ...(updates.description !== undefined
+                  ? { description: updates.description ?? undefined }
+                  : {}),
+                ...(updates.status ? { status: updates.status } : {}),
+              });
+              assistantMessage.actionResult = {
+                type: "task_updated",
+                title: patched.title,
+                dueAt: patched.dueAt,
+              };
+              // Build explicit confirmation from what actually changed
+              const changeParts: string[] = [];
+              if (updates.title && patched.title !== match.title) {
+                changeParts.push(`renamed to **${patched.title}**`);
+              }
+              if (updates.dueAt !== undefined) {
+                const duePart = patched.dueAt
+                  ? `due date moved to **${formatDueDate(patched.dueAt)}**`
+                  : "due date cleared";
+                changeParts.push(duePart);
+              }
+              if (updates.description !== undefined) {
+                changeParts.push("notes updated");
+              }
+              if (updates.status) {
+                changeParts.push(`status set to **${updates.status}**`);
+              }
+              const taskRef = `**${patched.title}**`;
+              if (changeParts.length > 0) {
+                assistantMessage.content = `Updated — ${taskRef}: ${changeParts.join(", ")}.`;
+              } else {
+                assistantMessage.content = `Updated **${patched.title}** — saved to your tasks.`;
+              }
+            } catch {
+              assistantMessage.content = `I found **${match.title}** but ran into an issue saving the update. Please try again or edit it directly in Tasks.`;
+            }
           } else if (ambiguous) {
             const needle = (taskTitle ?? "").toLowerCase();
             const candidates = activeTasks
@@ -522,35 +1110,50 @@ export function ChatPanel({
                 needle.includes(c.name.toLowerCase()),
             )?.id;
           }
-          // Build and save locally first — no auth required
-          const now = new Date().toISOString();
-          const localTask: StudentTask = {
-            id: crypto.randomUUID(),
-            title: taskData.title,
-            dueAt: taskData.dueAt ?? undefined,
-            description: taskData.description ?? undefined,
-            type: taskData.type ?? undefined,
-            classId,
-            source: "chat",
-            status: "todo",
-            createdAt: now,
-            updatedAt: now,
-          };
-          setTasks((prev) => {
-            const updated = [...prev, localTask];
+          try {
+            const localTask = await addTask({
+              title: taskData.title,
+              dueAt: taskData.dueAt ?? undefined,
+              description: taskData.description ?? undefined,
+              type: taskData.type ?? undefined,
+              classId,
+              source: "chat",
+              status: "todo",
+            });
+            assistantMessage.actionResult = {
+              type: "task_added",
+              title: localTask.title,
+              dueAt: localTask.dueAt,
+            };
+            assistantMessage.content = classId || !taskData.className
+              ? `Done - I added **${localTask.title}** to your tasks.`
+              : `Done - I added **${localTask.title}** to your tasks. I couldn't confidently match "${taskData.className}" to one of your saved classes, so I left it uncategorized.`;
+          } catch {
+            assistantMessage.content =
+              "I understood the task, but I ran into an issue saving it. Please try again or add it from Tasks.";
+          }
+        }
+
+        // Handle setup_schedule action — save parsed classes to the shared classes store.
+        if (json.action?.type === "setup_schedule") {
+          const newClasses = json.action.classes ?? [];
+          if (newClasses.length > 0) {
             try {
-              localStorage.setItem("scc-tasks", JSON.stringify(updated));
-            } catch {}
-            return updated;
-          });
-          // Attach confirmation card
-          assistantMessage.actionResult = {
-            type: "task_added",
-            title: localTask.title,
-            dueAt: localTask.dueAt,
-          };
-          assistantMessage.content = `Done — I added **${localTask.title}** to your tasks.`;
-          // TODO: Sync to Supabase via POST /api/tasks when auth context is available
+              await addClasses(
+                newClasses.map((schoolClass) => ({
+                  ...schoolClass,
+                  days: (schoolClass.days ?? []) as Weekday[],
+                  startTime: schoolClass.startTime ?? "",
+                  endTime: schoolClass.endTime ?? "",
+                })),
+              );
+              assistantMessage.content = `Done - I added ${newClasses.length} ${newClasses.length === 1 ? "class" : "classes"} to your schedule.`;
+            } catch {
+              assistantMessage.content =
+                assistantMessage.content.trimEnd() +
+                "\n\n(There was an issue saving your classes. Try describing them again or add them in Settings.)";
+            }
+          }
         }
 
         setMessages((current) => [...current.slice(0, -1), assistantMessage]);
@@ -576,24 +1179,39 @@ export function ChatPanel({
       }
     },
     [
-      activities,
       addAutomation,
+      addNote,
+      addPlanningItem,
+      planningItems,
+      deleteNote,
+      removePlanningItem,
+      addClasses,
+      addTask,
       attachment,
       calendarEntries,
       classes,
-      completeTask,
-      constraints,
+      completeStoredTask,
       isLoading,
-      profile,
-      reminderPreferences,
       speechSupported,
       speakMessage,
-      stopListening,
+      cancelListening,
+      sessionId,
+      notes,
       tasks,
       activeTasks,
       todayDayType,
       tutoringContext,
+      updateNote,
+      updateTask,
+      updatePlanningItem,
       voiceAutoRead,
+      onSessionChange,
+      scheduleArchitecture,
+      reloadTasks,
+      reloadClasses,
+      reloadNotes,
+      reloadPlanningItems,
+      reloadAutomations,
     ],
   );
 
@@ -627,9 +1245,28 @@ export function ChatPanel({
   };
 
   const handleSuggestedPrompt = (prompt: string) => {
+    cancelListening();
     setInput(prompt);
     setLastTranscript(null);
     textareaRef.current?.focus();
+  };
+
+  const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(event.target.value);
+    if (lastTranscript) {
+      setLastTranscript(null);
+    }
+  };
+
+  const handleVoiceToggle = () => {
+    if (isListening || isTranscribing) {
+      stopListening();
+      return;
+    }
+
+    setLastTranscript(null);
+    clearVoiceError();
+    startListening();
   };
 
   // ── Derived state ─────────────────────────────────────────────────────────
@@ -637,20 +1274,41 @@ export function ChatPanel({
   const hasUserMessages = messages.some((m) => m.role === "user");
   const showVoiceTranscriptHint = Boolean(lastTranscript && input.trim());
   const voiceStatusText = isListening
-    ? "Listening — speak now"
+    ? "Listening. Tap again when you're done."
     : isTranscribing
-      ? "Transcribing your speech..."
+      ? "Finishing that voice note..."
       : voiceState === "error"
         ? voiceError
         : voiceSupported
-          ? "Tap the mic to speak, then review before sending."
+          ? "Tap the mic for one short voice note, then review before sending."
           : "Voice input is not supported in this browser.";
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const handleClearChat = () => {
+  const handleClearChat = async () => {
+    cancelListening();
+    setLastTranscript(null);
     setMessages([INITIAL_GREETING]);
-    try { localStorage.removeItem("scc-chat-history"); } catch {}
+    const currentSessionId = sessionId;
+    setSessionId(null);
+    onSessionChange?.(null);
+
+    try {
+      localStorage.removeItem("scc-chat-history");
+      localStorage.removeItem(sessionStorageKey);
+    } catch {}
+
+    if (user && currentSessionId) {
+      try {
+        await fetch(`/api/assistant/sessions/${currentSessionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session: { status: "archived" } }),
+        });
+      } catch {
+        // Keep the local clear responsive even if archiving fails.
+      }
+    }
   };
 
   return (
@@ -731,9 +1389,11 @@ export function ChatPanel({
       {/* Context-aware suggestion chips — always visible above the input bar */}
       <div className="shrink-0 py-2">
         <div className="flex flex-wrap gap-2">
-          {(activeTasks.length === 0
-            ? ["Add my first task", "Set up my schedule", "What can you help with?"]
-            : ["What's due today?", "Update a task", "What should I work on tonight?"]
+          {(tutoringContext
+            ? suggestedPrompts
+            : activeTasks.length === 0
+              ? ["Add my first task", "Set up my schedule", "What can you help with?"]
+              : ["What's due today?", "Update a task", "What should I work on tonight?"]
           ).map((chip) => (
             <button
               key={chip}
@@ -751,6 +1411,72 @@ export function ChatPanel({
       {/* Input area */}
       <div className="shrink-0 border-t border-border pt-4">
         <form onSubmit={handleSend} className="space-y-2">
+          {/* Active session files strip — shown when tutoring context carries uploaded files */}
+          {tutoringContext?.attachmentIds && tutoringContext.attachmentIds.length > 0 && !attachment && (
+            <div className="flex items-center gap-2 rounded-xl border border-sidebar-accent/20 bg-sidebar-accent/5 px-3 py-1.5">
+              <svg className="h-3.5 w-3.5 shrink-0 text-sidebar-accent/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+              <span className="flex-1 text-[11px] text-muted">
+                {tutoringContext.attachmentIds.length === 1
+                  ? "1 session file active"
+                  : `${tutoringContext.attachmentIds.length} session files active`}
+                {" "}— the assistant can see {tutoringContext.attachmentIds.length === 1 ? "it" : "them"}
+              </span>
+            </div>
+          )}
+
+          {tutoringContext && activeTutoringSummary && (
+            <div className="rounded-2xl border border-sidebar-accent/20 bg-sidebar-accent/5 px-4 py-3">
+              <div className="flex flex-wrap items-start gap-2 text-[11px]">
+                <span className="rounded-full bg-sidebar-accent/15 px-2 py-0.5 font-semibold text-sidebar-accent">
+                  {visibleTutoringGroundingStatus === "uploaded_materials"
+                    ? "Using uploaded files first"
+                    : visibleTutoringGroundingStatus === "class_materials"
+                      ? "Using class materials"
+                      : visibleTutoringGroundingStatus === "limited_materials"
+                        ? "Limited readable materials"
+                        : "General help fallback"}
+                </span>
+                {activeTutoringSummary.linkedClass && (
+                  <span className="rounded-full bg-card px-2 py-0.5 text-muted">
+                    Class: {activeTutoringSummary.linkedClass.name}
+                  </span>
+                )}
+                {activeTutoringSummary.linkedTask && (
+                  <span className="rounded-full bg-card px-2 py-0.5 text-muted">
+                    Task: {activeTutoringSummary.linkedTask.title}
+                  </span>
+                )}
+                {tutoringContext.topic && (
+                  <span className="rounded-full bg-card px-2 py-0.5 text-muted">
+                    Topic: {tutoringContext.topic}
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 space-y-1 text-[11px] text-muted">
+                <p>
+                  {activeTutoringSummary.selectedMaterials.length > 0
+                    ? `Active class materials: ${activeTutoringSummary.selectedMaterials
+                        .slice(0, 3)
+                        .map((material) => material.title)
+                        .join(", ")}${activeTutoringSummary.selectedMaterials.length > 3 ? ` +${activeTutoringSummary.selectedMaterials.length - 3} more` : ""}`
+                    : "Active class materials: none specifically selected"}
+                </p>
+                <p>
+                  {tutoringContext.attachmentIds?.length
+                    ? `Session files: ${tutoringContext.attachmentIds.length} active${tutoringContext.attachmentIds.length > 1 ? " - mention the file name or topic if you want one used" : ""}`
+                    : "Session files: none active"}
+                </p>
+                {visibleTutoringGroundingStatus === "limited_materials" && (
+                  <p className="text-accent-rose-foreground">
+                    Some saved materials are linked, but they do not currently provide enough readable text for reliable class-specific answers.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Attachment preview */}
           {attachment && (
             <div
@@ -809,12 +1535,18 @@ export function ChatPanel({
                 type="button"
                 onClick={() => setAttachment(null)}
                 title="Remove attachment"
-                className="shrink-0 text-muted transition hover:text-foreground"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-surface hover:text-foreground"
               >
                 <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+            </div>
+          )}
+
+          {attachment?.status === "failed" && attachment.error && (
+            <div className="rounded-2xl border border-accent-rose/20 bg-accent-rose/5 px-4 py-2 text-xs text-accent-rose-foreground">
+              {attachment.error}
             </div>
           )}
 
@@ -859,11 +1591,13 @@ export function ChatPanel({
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder={
                 isListening
                   ? "Listening…"
+                  : isTranscribing
+                    ? "Finishing your transcript…"
                   : tutoringContext
                     ? "Ask your question or say what you're working on…"
                     : profile.displayName
@@ -872,6 +1606,9 @@ export function ChatPanel({
               }
               rows={2}
               disabled={isLoading}
+              autoCapitalize="sentences"
+              autoCorrect="on"
+              spellCheck
               style={{ maxHeight: "8rem" }}
               className={`flex-1 resize-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted/60 disabled:opacity-50 ${
                 isListening || isTranscribing ? "text-muted" : ""
@@ -885,7 +1622,7 @@ export function ChatPanel({
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading || attachment?.status === "uploading"}
                 title="Attach a file or image"
-                className={`flex h-8 w-8 items-center justify-center rounded-xl transition-all disabled:opacity-40 ${
+                className={`flex h-9 w-9 items-center justify-center rounded-xl transition-all disabled:opacity-40 ${
                   attachment
                     ? "bg-sidebar-accent/10 text-sidebar-accent"
                     : "text-muted hover:bg-surface hover:text-foreground"
@@ -905,19 +1642,22 @@ export function ChatPanel({
               {voiceSupported && (
                 <button
                   type="button"
-                  onClick={isListening || isTranscribing ? stopListening : startListening}
+                  onClick={handleVoiceToggle}
                   disabled={isLoading}
                   title={
-                    isListening || isTranscribing ? "Stop voice input" : "Speak a message"
+                    isListening ? "Tap to stop recording" : isTranscribing ? "Processing…" : "Record a voice note"
                   }
-                  className={`relative flex h-8 w-8 items-center justify-center rounded-xl transition-all disabled:opacity-40 ${
-                    isListening || isTranscribing
-                      ? "bg-accent-rose/20 text-accent-rose-foreground"
-                      : "text-muted hover:bg-surface hover:text-foreground"
+                  aria-label={isListening ? "Stop voice recording" : "Start voice recording"}
+                  className={`relative flex h-9 w-9 items-center justify-center rounded-xl transition-all disabled:opacity-40 ${
+                    isListening
+                      ? "bg-accent-rose/25 text-accent-rose-foreground ring-1 ring-accent-rose/40"
+                      : isTranscribing
+                        ? "bg-accent-rose/15 text-accent-rose-foreground"
+                        : "text-muted hover:bg-surface hover:text-foreground"
                   }`}
                 >
-                  {(isListening || isTranscribing) && (
-                    <span className="absolute inset-0 animate-pulse rounded-xl bg-accent-rose/15" />
+                  {isListening && (
+                    <span className="absolute inset-0 animate-pulse rounded-xl bg-accent-rose/20" />
                   )}
                   <svg className="relative h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -934,7 +1674,7 @@ export function ChatPanel({
               <button
                 type="submit"
                 disabled={isLoading || !input.trim()}
-                className="flex h-8 items-center gap-1.5 rounded-xl bg-hero px-3.5 text-xs font-semibold text-white transition hover:bg-hero-mid active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex h-9 items-center gap-1.5 rounded-xl bg-hero px-3.5 text-xs font-semibold text-white transition hover:bg-hero-mid active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {isLoading ? (
                   <span className="flex items-center gap-1">
@@ -956,12 +1696,22 @@ export function ChatPanel({
 
           {/* Status bar */}
           <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted/60">
-            <p className={voiceState === "error" ? "text-accent-rose-foreground" : undefined}>
-              {voiceStatusText}
-            </p>
+            {(isListening || isTranscribing || voiceState === "error") ? (
+              <p className={`font-medium ${
+                isListening
+                  ? "text-accent-rose-foreground"
+                  : isTranscribing
+                    ? "text-muted"
+                    : "text-accent-rose-foreground"
+              }`}>
+                {voiceStatusText}
+              </p>
+            ) : (
+              <span />
+            )}
             <div className="flex items-center gap-3">
               {speechSupported && (
-                <label className="flex cursor-pointer items-center gap-1.5">
+                <label className="flex cursor-pointer items-center gap-1.5 select-none">
                   <input
                     type="checkbox"
                     checked={voiceAutoRead}
@@ -971,7 +1721,6 @@ export function ChatPanel({
                   <span>Read replies aloud</span>
                 </label>
               )}
-              {/* Only shown on desktop — mobile keyboards don't use Shift+Enter */}
               <span className="hidden sm:inline">Shift+Enter for new line</span>
             </div>
           </div>

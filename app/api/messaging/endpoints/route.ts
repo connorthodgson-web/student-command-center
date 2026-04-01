@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthedSupabase } from "../../../../lib/supabase/route-auth";
+import { buildMessagingReadiness } from "../../../../lib/messaging-readiness";
 import {
   mapDbMessagingEndpoint,
   normalizeMessagingEndpointInput,
@@ -26,8 +27,11 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const endpoints = ((data ?? []) as DbMessagingEndpointRow[]).map(mapDbMessagingEndpoint);
+
   return NextResponse.json({
-    data: ((data ?? []) as DbMessagingEndpointRow[]).map(mapDbMessagingEndpoint),
+    data: endpoints,
+    readiness: buildMessagingReadiness(endpoints),
   });
 }
 
@@ -66,7 +70,7 @@ export async function POST(request: Request) {
         ...payload,
         is_active: false,
         is_preferred: false,
-        verification_status: "pending",
+        verification_status: "not_started",
       })
       .select("*")
       .single();

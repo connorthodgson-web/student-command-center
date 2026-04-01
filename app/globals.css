@@ -1,131 +1,61 @@
-/* Student Command Center — global styles */
+/* Student Command Center - global styles */
 @import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ── Light mode (default) ─────────────────────────────────────────── */
 :root {
   color-scheme: light;
-
-  /* Simple hex vars (no opacity modifier needed) */
-  --bg:               #f5f7f5;
-  --fg:               #111b17;
-  --muted:            #627069;
-  --card:             #ffffff;
-  --border:           #dce4de;
-  --surface:          #eef2f0;
-  --hero:             #0f2117;
-  --hero-mid:         #163020;
-  --hero-light:       #1d3e28;
-  --sidebar:          #0f2117;
-  --sidebar-active:   #1d3e28;
-  --sidebar-hover:    #c8e8d0;
-
-  /* RGB triplets — used by Tailwind's opacity modifier syntax */
-  /* rgb(var(--sidebar-accent) / 0.2) etc. */
-  --sidebar-accent:   74 222 128;    /* #4ade80 — overridden by accent theme */
-  --sidebar-text:     122 171 138;   /* #7aab8a */
-  --accent-green:     212 237 217;   /* #d4edd9 */
-  --accent-green-fg:  #1a4028;
-  --accent-blue:      212 230 247;   /* #d4e6f7 */
-  --accent-blue-fg:   #173354;
-  --accent-amber:     253 239 211;   /* #fdefd3 */
-  --accent-amber-fg:  #4a3000;
-  --accent-rose:      253 224 224;   /* #fde0e0 */
-  --accent-rose-fg:   #4a1010;
-  --accent-purple:    235 224 253;   /* #ebe0fd */
-  --accent-purple-fg: #2e1054;
+  --bg: 245 247 245;
+  --fg: 17 27 23;
+  --muted: 98 112 105;
+  --card: 255 255 255;
+  --border: 220 228 222;
+  --surface: 238 242 240;
+  --hero: 15 33 23;
+  --hero-mid: 22 48 32;
+  --hero-light: 29 62 40;
+  --sidebar: 15 33 23;
+  --sidebar-active: 29 62 40;
+  --sidebar-hover: 200 232 208;
+  --sidebar-accent: 74 222 128;
+  --sidebar-text: 122 171 138;
+  --accent-green: 212 237 217;
+  --accent-green-fg: 26 64 40;
+  --accent-blue: 212 230 247;
+  --accent-blue-fg: 23 51 84;
+  --accent-amber: 253 239 211;
+  --accent-amber-fg: 74 48 0;
+  --accent-rose: 253 224 224;
+  --accent-rose-fg: 74 16 16;
+  --accent-purple: 235 224 253;
+  --accent-purple-fg: 46 16 84;
 }
 
-/* ── Dark mode ────────────────────────────────────────────────────── */
 [data-theme="dark"] {
   color-scheme: dark;
-
-  /* Main surface colors go dark — keep forest green character */
-  --bg:     #111815;
-  --fg:     #dce8df;
-  --muted:  #7a9480;
-  --card:   #192a1e;
-  --border: #25392a;
-  --surface: #1e3024;
-
-  /* Sidebar stays the same (it's already dark green — part of the brand) */
-
-  /* Accent token dark variants — darker bg, lighter fg text */
-  --accent-green:     30 62 36;    /* darkened green */
-  --accent-green-fg:  #7dd98a;     /* lighter green text */
-  --accent-blue:      20 42 68;
-  --accent-blue-fg:   #7ab8e8;
-  --accent-amber:     58 40 10;
-  --accent-amber-fg:  #e8b854;
-  --accent-rose:      58 20 20;
-  --accent-rose-fg:   #e88080;
-  --accent-purple:    42 26 72;
-  --accent-purple-fg: #c090f0;
 }
 
-/* ── Sidebar theme presets ────────────────────────────────────────── */
-/* Applied via data-sidebar attribute on <html>. Independent of light/dark. */
-
-/* Ocean — deep navy */
-[data-sidebar="ocean"] {
-  --hero:           #091829;
-  --hero-mid:       #0c2138;
-  --hero-light:     #102848;
-  --sidebar:        #091829;
-  --sidebar-active: #102848;
-  --sidebar-hover:  #c8d8eb;
-  --sidebar-text:   100 148 196; /* muted navy-blue */
-}
-
-/* Midnight — near-black with blue undertone */
-[data-sidebar="midnight"] {
-  --hero:           #080c14;
-  --hero-mid:       #10151f;
-  --hero-light:     #181e2e;
-  --sidebar:        #080c14;
-  --sidebar-active: #181e2e;
-  --sidebar-hover:  #d0d4e0;
-  --sidebar-text:   140 148 176; /* cool slate */
-}
-
-/* Slate — neutral warm-gray */
-[data-sidebar="slate"] {
-  --hero:           #151820;
-  --hero-mid:       #1c202c;
-  --hero-light:     #242838;
-  --sidebar:        #151820;
-  --sidebar-active: #242838;
-  --sidebar-hover:  #d4d6e0;
-  --sidebar-text:   144 148 172; /* muted slate */
-}
-
-/* Forest (default) — explicit so it can be selected in UI */
-[data-sidebar="forest"] {
-  --hero:           #0f2117;
-  --hero-mid:       #163020;
-  --hero-light:     #1d3e28;
-  --sidebar:        #0f2117;
-  --sidebar-active: #1d3e28;
-  --sidebar-hover:  #c8e8d0;
-  --sidebar-text:   122 171 138; /* muted green */
-}
-
-/* ── Base styles ──────────────────────────────────────────────────── */
 html {
-  background: var(--bg);
+  background: rgb(var(--bg));
+  transition: background-color 0.2s ease, color 0.2s ease;
+  /* Prevent iOS from inflating font sizes in landscape */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
-  min-height: 100vh;
-  background: var(--bg);
-  color: var(--fg);
+  min-height: 100dvh;
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: none;
+  /* Remove blue flash on tap (iOS/Android) */
+  -webkit-tap-highlight-color: transparent;
 }
 
 a {
@@ -137,34 +67,109 @@ a {
   box-sizing: border-box;
 }
 
-/* Text selection — uses accent color */
 ::selection {
   background: rgb(var(--accent-green) / 0.6);
-  color: var(--accent-green-fg);
+  color: rgb(var(--accent-green-fg));
 }
 
-/* ── Scrollbar — chat message list ───────────────────────────────── */
+/* chat-scroll uses a narrower 4px scrollbar; hidden on touch devices */
 .chat-scroll::-webkit-scrollbar {
   width: 4px;
 }
-.chat-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.chat-scroll::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 9999px;
-}
-.chat-scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
-  opacity: 0.4;
+
+@media (hover: none) and (pointer: coarse) {
+  .chat-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .chat-scroll {
+    scrollbar-width: none;
+  }
 }
 
-/* ── Smooth transitions for theme switch ─────────────────────────── */
-html {
-  transition: background-color 0.2s ease, color 0.2s ease;
-}
-
-/* Prevent transition flash on initial load */
 html.no-transition * {
   transition: none !important;
+}
+
+.app-safe-shell {
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top, 0px);
+  /* Horizontal safe area for landscape notched/dynamic-island phones */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  background: rgb(var(--bg));
+}
+
+.app-shell-offset {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 768px) {
+  .app-shell-offset {
+    padding-bottom: 0;
+  }
+}
+
+/* Prevent iOS from zooming into inputs with font-size < 16px.
+   Applied only on touch devices to avoid changing desktop appearance. */
+@media (hover: none) and (pointer: coarse) {
+  input[type="text"],
+  input[type="email"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="password"],
+  input[type="number"],
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
+/* Ensure interactive elements respond quickly on mobile (no 300ms delay) */
+button, a, [role="button"] {
+  touch-action: manipulation;
+}
+
+/* ── Focus ring ─────────────────────────────────────────────────────────── */
+/* Consistent keyboard-navigation ring across all interactive elements.
+   Uses the accent color so it's visible on any surface. */
+:focus-visible {
+  outline: 2px solid rgb(var(--sidebar-accent) / 0.7);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Remove the default outline only when our custom ring is applied */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ── Page entrance ──────────────────────────────────────────────────────── */
+/* Subtle fade-in so every page load feels intentional, not abrupt */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.page-enter {
+  animation: page-enter 0.18s ease-out both;
+}
+
+/* ── Scrollbar (all surfaces) ───────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted) / 0.5);
 }

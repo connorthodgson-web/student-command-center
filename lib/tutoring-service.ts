@@ -37,12 +37,14 @@ export async function createTutoringSession(
 export async function listTutoringSessions(
   supabase: SupabaseClient,
   userId: string,
-  options?: { classId?: string; tutoringMode?: TutoringMode },
+  options?: { classId?: string; tutoringMode?: TutoringMode; status?: "active" | "archived"; limit?: number },
 ) {
   return listAssistantSessions(supabase, userId, {
     channel: "tutoring",
     classId: options?.classId,
     tutoringMode: options?.tutoringMode,
+    status: options?.status,
+    limit: options?.limit,
   });
 }
 

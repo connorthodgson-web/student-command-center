@@ -1,109 +1,24 @@
 // UI redesign pass
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useState } from "react";
 import { SectionHeader } from "../../components/SectionHeader";
 import { TaskInputBox } from "../../components/TaskInputBox";
 import { ManualTaskForm } from "../../components/ManualTaskForm";
 import { TaskCard } from "../../components/TaskCard";
+import { resolveClassColor } from "../../lib/class-colors";
 import { sortTasksByDueDate } from "../../lib/tasks";
-import type { SchoolClass, StudentTask } from "../../types";
+import { useTaskStore } from "../../lib/task-store";
+import { useClasses } from "../../lib/stores/classStore";
 
 type ViewMode = "timeline" | "by-class";
 type AddMode = "smart" | "manual";
 
 export default function TasksPage() {
-  const [classes, setClasses] = useState<SchoolClass[]>([]);
-  const [tasks, setTasks] = useState<StudentTask[]>([]);
-  const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
-  const loading = false;
+  const { classes } = useClasses();
+  const { tasks, removingIds, loading, addTask, completeTask, deleteTask } = useTaskStore();
   const [viewMode, setViewMode] = useState<ViewMode>("timeline");
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("scc-onboarding");
-      if (raw) {
-        const data = JSON.parse(raw) as { classes?: SchoolClass[] };
-        if (Array.isArray(data.classes)) setClasses(data.classes);
-      }
-    } catch {}
-    try {
-      const raw = localStorage.getItem("scc-tasks");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setTasks(parsed as StudentTask[]);
-      }
-    } catch {}
-  }, []);
-
-  const saveTasks = useCallback((updated: StudentTask[]) => {
-    try {
-      localStorage.setItem("scc-tasks", JSON.stringify(updated));
-    } catch {}
-  }, []);
-
-  const addTask = useCallback(
-    async (partial: {
-      title: string;
-      description?: string;
-      classId?: string;
-      dueAt?: string;
-      type?: StudentTask["type"];
-      reminderAt?: string;
-      source?: StudentTask["source"];
-      status?: StudentTask["status"];
-    }): Promise<StudentTask> => {
-      const now = new Date().toISOString();
-      const task: StudentTask = {
-        id: crypto.randomUUID(),
-        status: partial.status ?? "todo",
-        source: partial.source ?? "manual",
-        createdAt: now,
-        updatedAt: now,
-        ...partial,
-      };
-      setTasks((prev) => {
-        const updated = [...prev, task];
-        saveTasks(updated);
-        return updated;
-      });
-      return task;
-    },
-    [saveTasks],
-  );
-
-  const completeTask = useCallback(
-    (id: string) => {
-      setTasks((prev) => {
-        const updated = prev.map((t) =>
-          t.id === id ? { ...t, status: "done" as const } : t,
-        );
-        saveTasks(updated);
-        return updated;
-      });
-    },
-    [saveTasks],
-  );
-
-  const deleteTask = useCallback(
-    (id: string) => {
-      setRemovingIds((prev) => new Set([...prev, id]));
-      setTimeout(() => {
-        setTasks((prev) => {
-          const updated = prev.filter((t) => t.id !== id);
-          saveTasks(updated);
-          return updated;
-        });
-        setRemovingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }, 500);
-    },
-    [saveTasks],
-  );
   const [addMode, setAddMode] = useState<AddMode>("smart");
   const [showCompleted, setShowCompleted] = useState(false);
 
@@ -117,7 +32,7 @@ export default function TasksPage() {
     // One entry per class that has tasks
     ...classes
       .filter((cls) => sortedTasks.some((t) => t.classId === cls.id))
-      .map((cls) => ({ classId: cls.id, label: cls.name, color: cls.color })),
+      .map((cls) => ({ classId: cls.id, label: cls.name, color: resolveClassColor(cls.color) })),
     // "General" group for tasks with no classId
     ...(sortedTasks.some((t) => !t.classId)
       ? [{ classId: null, label: "General / No Class", color: undefined }]
@@ -125,7 +40,7 @@ export default function TasksPage() {
   ];
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-6 py-10">
+    <main className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-8 px-6 py-10 animate-page-enter">
       <SectionHeader
         title="Tasks"
         description="Capture school work naturally, then review it here."
@@ -273,7 +188,7 @@ export default function TasksPage() {
                       {color && (
                         <span
                           className="inline-block h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: color }}
+                          style={{ backgroundColor: resolveClassColor(color) }}
                         />
                       )}
                       <h3 className="text-sm font-semibold text-foreground">{label}</h3>
@@ -282,11 +197,11 @@ export default function TasksPage() {
                       </span>
                       {classId && (
                         <Link
-                          href={`/chat?q=${encodeURIComponent(`Help me plan how to tackle my ${label} tasks. What should I prioritize?`)}`}
+                          href={`/chat?tutor=true&classId=${classId}`}
                           className="ml-auto flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[10px] font-medium text-muted transition hover:border-sidebar-accent/40 hover:text-foreground"
                         >
-                          <span className="text-[9px] text-sidebar-accent">✦</span>
-                          Ask
+                          <span className="text-[9px]">🎓</span>
+                          Study
                         </Link>
                       )}
                     </div>

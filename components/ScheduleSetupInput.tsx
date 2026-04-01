@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import type { SchoolClass, Weekday } from "../types";
+import { ClassColorField } from "./ClassColorField";
+import type { SchoolClass, ScheduleArchitecture, Weekday } from "../types";
+import { resolveClassColor } from "../lib/class-colors";
 import { deriveScheduleLabel, getRotationSelectionValue, rotationSelectionToDays } from "../lib/class-rotation";
+import { getRotationLabelsForArchitecture, normalizeScheduleArchitecture } from "../lib/schedule-architecture";
 
 const WEEKDAYS: { label: string; value: Weekday }[] = [
   { label: "Mon", value: "monday" },
@@ -18,7 +21,8 @@ type Status = "idle" | "loading" | "preview" | "error";
 
 type Props = {
   existingClasses: SchoolClass[];
-  onConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => Promise<void> | void;
+  scheduleArchitecture: ScheduleArchitecture;
+  onConfirmed: (classes: Array<Omit<SchoolClass, "id">>) => Promise<unknown> | void;
   onCancel?: () => void;
 };
 
@@ -26,12 +30,20 @@ type AssistantResponse =
   | { intent: "setup_schedule"; classes: Array<Omit<SchoolClass, "id">> }
   | { intent: string; error?: string };
 
-export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: Props) {
+export function ScheduleSetupInput({
+  existingClasses,
+  scheduleArchitecture,
+  onConfirmed,
+  onCancel,
+}: Props) {
+  const normalizedArchitecture = normalizeScheduleArchitecture(scheduleArchitecture);
+  const rotationLabels = getRotationLabelsForArchitecture(normalizedArchitecture);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [editableSchedule, setEditableSchedule] = useState<Array<Omit<SchoolClass, "id">> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const reviewSummary = editableSchedule ? summarizeScheduleReview(editableSchedule) : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,6 +70,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
             dueSoonRemindersEnabled: false,
           },
           effectiveDayType: null,
+          scheduleArchitecture: normalizedArchitecture,
         }),
       });
 
@@ -71,7 +84,11 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
         const parsed = (json as Extract<AssistantResponse, { intent: "setup_schedule" }>).classes;
         if (parsed.length === 0) {
           setErrorMessage(
-            'Couldn\'t find any classes in that description. Try something like: "AP Chem Mon/Wed/Fri 9-9:50, English Lit A-Day 10-11, History Tue/Thu 2-3:15."'
+            `Couldn't find any classes in that description. Try something like: "${
+              normalizedArchitecture.type === "rotation"
+                ? `AP Chem ${rotationLabels[0]}-Day 9-9:50, English Lit ${rotationLabels[1] ?? rotationLabels[0]}-Day 10-11, History Tue/Thu 2-3:15`
+                : "AP Chem Mon/Wed/Fri 9-9:50, English Lit Tue/Thu 10-11, History every day 2-3:15"
+            }."`
           );
           setStatus("error");
         } else {
@@ -80,7 +97,11 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
         }
       } else {
         setErrorMessage(
-          'Try describing your full class schedule, for example: "AP Chem Mon/Wed/Fri 9-9:50, English Lit A-Day 10-11, History Tue/Thu 2-3:15."'
+          `Try describing your full class schedule, for example: "${
+            normalizedArchitecture.type === "rotation"
+              ? `AP Chem ${rotationLabels[0]}-Day 9-9:50, English Lit ${rotationLabels[1] ?? rotationLabels[0]}-Day 10-11, History Tue/Thu 2-3:15`
+              : "AP Chem Mon/Wed/Fri 9-9:50, English Lit Tue/Thu 10-11, History every day 2-3:15"
+          }."`
         );
         setStatus("error");
       }
@@ -144,7 +165,11 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
               void handleSubmit(e as unknown as React.FormEvent);
             }
           }}
-          placeholder={`Describe your full schedule in plain English.\n\nExample: "AP Chem Mon/Wed/Fri 9-9:50, English Lit A-Day 10-11:15, History Tue/Thu 2-3:15, PE every day 12-12:45"`}
+          placeholder={`Describe your full schedule in plain English.\n\nExample: "${
+            normalizedArchitecture.type === "rotation"
+              ? `AP Chem ${rotationLabels[0]}-Day 9-9:50, English Lit ${rotationLabels[1] ?? rotationLabels[0]}-Day 10-11:15, History Tue/Thu 2-3:15, PE every school day 12-12:45`
+              : "AP Chem Mon/Wed/Fri 9-9:50, English Lit Tue/Thu 10-11:15, History every day 2-3:15, PE every school day 12-12:45"
+          }"`}
           rows={4}
           disabled={status === "loading"}
           className="w-full resize-none rounded-xl border border-border bg-surface px-4 py-3.5 text-sm text-foreground placeholder:text-muted outline-none transition focus:border-accent-green-foreground/50 focus:ring-2 focus:ring-accent-green/40 disabled:opacity-60"
@@ -189,9 +214,18 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
           {" "}review and edit
         </p>
         <p className="mt-0.5 text-xs text-muted">
-          Make any corrections before saving. Use rotation to mark A-day, B-day, or both.
+          Make any corrections before saving.
+          {normalizedArchitecture.type === "rotation"
+            ? ` Use rotation to mark which of ${rotationLabels.join("/")}-Day this class belongs to.`
+            : " This schedule is set to weekday-based, so rotation labels are hidden."}
         </p>
       </div>
+
+      {reviewSummary && (
+        <p className="rounded-xl border border-accent-amber/40 bg-accent-amber/10 px-4 py-2.5 text-sm text-accent-amber-foreground">
+          {reviewSummary}
+        </p>
+      )}
 
       <div className="space-y-3">
         {editableSchedule!.map((cls, i) => (
@@ -202,7 +236,7 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
             <div className="flex items-center gap-2">
               <div
                 className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ backgroundColor: cls.color ?? "#d4edd9" }}
+                style={{ backgroundColor: resolveClassColor(cls.color) }}
               />
               <input
                 type="text"
@@ -220,6 +254,13 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
                 ×
               </button>
             </div>
+
+            <ClassColorField
+              value={resolveClassColor(cls.color)}
+              onChange={(color) => updateClass(i, { color })}
+              label="Color"
+              helperText="Use presets, the browser picker, or a custom hex before saving this class."
+            />
 
             <div className="flex items-center gap-2 text-xs text-muted">
               <span className="w-8 shrink-0">Time</span>
@@ -257,35 +298,57 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
               ))}
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-muted">
-              <span className="w-14 shrink-0">Rotation</span>
-              {(["", "A", "B", "AB"] as const).map((value) => (
-                <button
-                  key={value || "none"}
-                  type="button"
-                  onClick={() => {
-                    const rotationDays = rotationSelectionToDays(value);
-                    updateClass(i, {
-                      rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
-                      scheduleLabel: deriveScheduleLabel(rotationDays),
-                    });
-                  }}
-                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
-                    getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel) === value
-                      ? value === "A"
-                        ? "border border-accent-blue-foreground/30 bg-accent-blue text-accent-blue-foreground"
-                      : value === "B"
-                          ? "border border-accent-purple-foreground/30 bg-accent-purple text-accent-purple-foreground"
-                          : value === "AB"
+            {normalizedArchitecture.type === "rotation" && (
+              <div className="flex items-start gap-2 text-xs text-muted">
+                <span className="w-14 shrink-0 pt-1">Rotation</span>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateClass(i, { rotationDays: undefined, scheduleLabel: undefined })
+                    }
+                    className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
+                      getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel).length === 0
+                        ? "border border-border bg-card text-foreground"
+                        : "border border-border text-muted hover:bg-card hover:text-foreground"
+                    }`}
+                  >
+                    None
+                  </button>
+                  {rotationLabels.map((label) => {
+                    const selected = getRotationSelectionValue(
+                      cls.rotationDays,
+                      cls.scheduleLabel,
+                    ).includes(label);
+                    const nextRotationDays = selected
+                      ? getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel).filter(
+                          (value) => value !== label,
+                        )
+                      : [...getRotationSelectionValue(cls.rotationDays, cls.scheduleLabel), label];
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => {
+                          const rotationDays = rotationSelectionToDays(nextRotationDays);
+                          updateClass(i, {
+                            rotationDays: rotationDays.length > 0 ? rotationDays : undefined,
+                            scheduleLabel: deriveScheduleLabel(rotationDays),
+                          });
+                        }}
+                        className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
+                          selected
                             ? "border border-accent-green-foreground/30 bg-accent-green text-accent-green-foreground"
-                          : "border border-border bg-card text-foreground"
-                      : "border border-border text-muted hover:bg-card hover:text-foreground"
-                  }`}
-                >
-                  {value === "" ? "None" : value === "AB" ? "A+B" : `${value}-Day`}
-                </button>
-              ))}
-            </div>
+                            : "border border-border text-muted hover:bg-card hover:text-foreground"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -327,4 +390,31 @@ export function ScheduleSetupInput({ existingClasses, onConfirmed, onCancel }: P
       </div>
     </div>
   );
+}
+
+function summarizeScheduleReview(classes: Array<Omit<SchoolClass, "id">>) {
+  const missingTimeCount = classes.filter((schoolClass) =>
+    !schoolClass.startTime.trim() || !schoolClass.endTime.trim(),
+  ).length;
+  const missingPatternCount = classes.filter((schoolClass) =>
+    schoolClass.days.length === 0 && (schoolClass.rotationDays?.length ?? 0) === 0,
+  ).length;
+
+  const parts: string[] = [];
+  if (missingTimeCount > 0) {
+    parts.push(
+      `${missingTimeCount} ${missingTimeCount === 1 ? "class is" : "classes are"} missing a reliable time`,
+    );
+  }
+  if (missingPatternCount > 0) {
+    parts.push(
+      `${missingPatternCount} ${missingPatternCount === 1 ? "class is" : "classes are"} missing meeting days or rotation`,
+    );
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return `${parts.join(". ")}. Save only if that partial schedule is intentional.`;
 }

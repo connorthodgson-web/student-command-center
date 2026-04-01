@@ -84,3 +84,11 @@ Planned stack:
 
 Build the assistant experience first.
 The interface should support the assistant, not replace it.
+
+## Local Verification
+
+Use these commands before merging or doing broader cleanup work:
+
+- `npm run typecheck`
+- `npm run lint`
+- `npm run build`

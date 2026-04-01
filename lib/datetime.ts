@@ -91,6 +91,41 @@ export function formatDateTime(dateInput: string | Date): string {
   return `${dateStr} at ${timeStr}`;
 }
 
+/**
+ * Formats an ISO date for an assessment (test/quiz/exam).
+ * Shows the day or date WITHOUT a time component, since assessments have a date, not a due time.
+ * Examples:
+ *   - Same day   → "Today"
+ *   - Next day   → "Tomorrow"
+ *   - Within 7d  → "Friday"
+ *   - Further    → "Fri, Apr 3"
+ */
+export function formatAssessmentDate(isoString: string | undefined | null): string {
+  if (!isoString) return "No date set";
+
+  const date = new Date(isoString);
+  if (isNaN(date.getTime())) return "Invalid date";
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+  const sevenDaysOut = new Date(todayStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  if (dateStart.getTime() === todayStart.getTime()) return "Today";
+  if (dateStart.getTime() === tomorrowStart.getTime()) return "Tomorrow";
+
+  if (dateStart < sevenDaysOut) {
+    return new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(date);
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
 export function isToday(dateInput: string | Date) {
   const date = new Date(dateInput);
   const today = new Date();

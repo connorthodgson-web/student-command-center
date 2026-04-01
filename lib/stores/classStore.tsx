@@ -12,11 +12,21 @@ import { useAuth } from "../auth-context";
 import type { ClassInsert, ClassUpdate } from "../classes";
 import type { SchoolClass } from "../../types";
 
+export type ScheduleImportSummary = {
+  created: number;
+  updated: number;
+  skipped: number;
+  ambiguous: number;
+  partial: number;
+};
+
 type ClassStoreContextValue = {
   classes: SchoolClass[];
   loading: boolean;
+  reloadClasses: () => Promise<void>;
   addClass: (schoolClass: ClassInsert) => Promise<void>;
-  addClasses: (schoolClasses: ClassInsert[]) => Promise<void>;
+  addClasses: (schoolClasses: ClassInsert[]) => Promise<ScheduleImportSummary>;
+  importSchedule: (schoolClasses: ClassInsert[]) => Promise<ScheduleImportSummary>;
   updateClass: (id: string, updates: ClassUpdate) => Promise<void>;
   deleteClass: (id: string) => Promise<void>;
 };
@@ -74,23 +84,33 @@ export function ClassStoreProvider({ children }: { children: React.ReactNode }) 
     }
   }, []);
 
-  const addClasses = useCallback(async (schoolClasses: ClassInsert[]) => {
+  const importSchedule = useCallback(async (schoolClasses: ClassInsert[]) => {
     const response = await fetch("/api/classes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ classes: schoolClasses }),
+      body: JSON.stringify({ classes: schoolClasses, importMode: "safe_schedule" }),
     });
-    const json = (await response.json()) as { data?: SchoolClass[]; error?: string };
+    const json = (await response.json()) as {
+      data?: SchoolClass[];
+      importSummary?: ScheduleImportSummary;
+      error?: string;
+    };
 
     if (!response.ok) {
       throw new Error(json.error ?? "Failed to save classes.");
     }
 
-    const createdClasses = json.data ?? [];
-    if (createdClasses.length > 0) {
-      setClasses((prev) => [...prev, ...createdClasses]);
-    }
-  }, []);
+    await loadClasses();
+    return (
+      json.importSummary ?? {
+        created: json.data?.length ?? 0,
+        updated: 0,
+        skipped: 0,
+        ambiguous: 0,
+        partial: 0,
+      }
+    );
+  }, [loadClasses]);
 
   const updateClass = useCallback(async (id: string, updates: ClassUpdate) => {
     const response = await fetch("/api/classes", {
@@ -124,8 +144,17 @@ export function ClassStoreProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const value = useMemo(
-    () => ({ classes, loading, addClass, addClasses, updateClass, deleteClass }),
-    [classes, loading, addClass, addClasses, updateClass, deleteClass]
+    () => ({
+      classes,
+      loading,
+      reloadClasses: loadClasses,
+      addClass,
+      addClasses: importSchedule,
+      importSchedule,
+      updateClass,
+      deleteClass,
+    }),
+    [classes, loading, loadClasses, addClass, importSchedule, updateClass, deleteClass]
   );
 
   return (

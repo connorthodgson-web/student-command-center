@@ -15,6 +15,8 @@ import { processAssistantAttachment } from "../../../../lib/assistant-attachment
 import { appendAssistantSessionEvent } from "../../../../lib/assistant-sessions";
 import { getAuthedSupabase } from "../../../../lib/supabase/route-auth";
 
+export const runtime = "nodejs";
+
 type CreateAssistantAttachmentRequest = {
   attachment?: AssistantAttachmentInput;
 };
@@ -169,37 +171,34 @@ async function handleMultipartUpload(
   supabase: SupabaseClient,
   userId: string,
 ) {
-  const formData = await request.formData();
-  const upload = formData.get("file");
-  if (!(upload instanceof File)) {
-    return NextResponse.json({ error: "file is required." }, { status: 400 });
-  }
-
-  const bytes = Buffer.from(await upload.arrayBuffer());
-  if (bytes.length === 0) {
-    return NextResponse.json({ error: "The uploaded file was empty." }, { status: 400 });
-  }
-
-  if (bytes.length > MAX_ASSISTANT_ATTACHMENT_BYTES) {
-    return NextResponse.json(
-      { error: "Assistant attachments must be 8 MB or smaller for now." },
-      { status: 400 },
-    );
-  }
-
-  const fileName = upload.name || "upload";
-  const mimeType = upload.type || "application/octet-stream";
-  const title = parseOptionalString(formData.get("title")) ?? fileName;
-  const classId = parseOptionalString(formData.get("classId")) ?? undefined;
-  const taskId = parseOptionalString(formData.get("taskId")) ?? undefined;
-  const sessionId = parseOptionalString(formData.get("sessionId")) ?? undefined;
-  const messageId = parseOptionalString(formData.get("messageId")) ?? undefined;
-  let metadata: Record<string, unknown> = {};
-  let attachmentType: AssistantAttachmentInput["attachmentType"];
-
   try {
-    metadata = parseMetadataField(formData.get("metadata"));
-    attachmentType =
+    const formData = await request.formData();
+    const upload = formData.get("file");
+    if (!(upload instanceof File)) {
+      return NextResponse.json({ error: "file is required." }, { status: 400 });
+    }
+
+    const bytes = Buffer.from(await upload.arrayBuffer());
+    if (bytes.length === 0) {
+      return NextResponse.json({ error: "The uploaded file was empty." }, { status: 400 });
+    }
+
+    if (bytes.length > MAX_ASSISTANT_ATTACHMENT_BYTES) {
+      return NextResponse.json(
+        { error: "Assistant attachments must be 8 MB or smaller for now." },
+        { status: 400 },
+      );
+    }
+
+    const fileName = upload.name || "upload";
+    const mimeType = upload.type || "application/octet-stream";
+    const title = parseOptionalString(formData.get("title")) ?? fileName;
+    const classId = parseOptionalString(formData.get("classId")) ?? undefined;
+    const taskId = parseOptionalString(formData.get("taskId")) ?? undefined;
+    const sessionId = parseOptionalString(formData.get("sessionId")) ?? undefined;
+    const messageId = parseOptionalString(formData.get("messageId")) ?? undefined;
+    const metadata = parseMetadataField(formData.get("metadata"));
+    const attachmentType =
       (parseOptionalString(formData.get("attachmentType")) as AssistantAttachmentInput["attachmentType"] | null)
       ?? inferAssistantAttachmentType({ fileName, mimeType });
 
@@ -209,30 +208,25 @@ async function handleMultipartUpload(
       sessionId,
       messageId,
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Invalid attachment relation.";
-    return NextResponse.json({ error: message }, { status: 400 });
-  }
 
-  const storagePath = buildAssistantAttachmentStoragePath(userId, fileName);
-  const { error: uploadError } = await supabase.storage
-    .from(ASSISTANT_ATTACHMENTS_BUCKET)
-    .upload(storagePath, bytes, {
-      contentType: mimeType,
-      upsert: false,
+    const storagePath = buildAssistantAttachmentStoragePath(userId, fileName);
+    const { error: uploadError } = await supabase.storage
+      .from(ASSISTANT_ATTACHMENTS_BUCKET)
+      .upload(storagePath, bytes, {
+        contentType: mimeType,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      return NextResponse.json({ error: uploadError.message }, { status: 500 });
+    }
+
+    const processing = await processAssistantAttachment({
+      fileName,
+      mimeType,
+      bytes,
     });
 
-  if (uploadError) {
-    return NextResponse.json({ error: uploadError.message }, { status: 500 });
-  }
-
-  const processing = await processAssistantAttachment({
-    fileName,
-    mimeType,
-    bytes,
-  });
-
-  try {
     const payload = normalizeAssistantAttachmentInput({
       sessionId,
       messageId,
@@ -278,8 +272,10 @@ async function handleMultipartUpload(
       { status: 201 },
     );
   } catch (error) {
-    await supabase.storage.from(ASSISTANT_ATTACHMENTS_BUCKET).remove([storagePath]);
-    const message = error instanceof Error ? error.message : "Failed to save uploaded attachment.";
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to process that upload. The file was not attached.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
@@ -388,6 +384,6 @@ function parseMetadataField(value: FormDataEntryValue | null) {
     const parsed = JSON.parse(value) as Record<string, unknown>;
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
-    throw new Error("metadata must be valid JSON when provided.");
+    return { raw: value.trim() };
   }
 }

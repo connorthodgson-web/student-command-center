@@ -68,8 +68,8 @@ a {
 }
 
 ::selection {
-  background: rgb(var(--accent-green) / 0.6);
-  color: rgb(var(--accent-green-fg));
+  background: rgb(var(--accent-blue) / 0.8);
+  color: rgb(var(--fg));
 }
 
 /* chat-scroll uses a narrower 4px scrollbar; hidden on touch devices */

@@ -279,13 +279,16 @@ type AttachmentUploadState = {
 
 // ── Initial greeting ──────────────────────────────────────────────────────────
 
-const INITIAL_GREETING: ChatMessage = {
-  id: "chat-greeting",
-  role: "assistant",
-  content:
-    "Hi! I can help you capture school tasks, review what's due, and think through your workload.",
-  createdAt: new Date().toISOString(),
-};
+function buildInitialGreeting(tutoringContext?: TutoringContext): ChatMessage {
+  return {
+    id: tutoringContext ? "chat-greeting-tutoring" : "chat-greeting",
+    role: "assistant",
+    content: tutoringContext
+      ? "Hi! I can help you study this topic, explain the material, and work through questions step by step."
+      : "Hi! I can help you capture school tasks, review what's due, and think through your workload.",
+    createdAt: new Date().toISOString(),
+  };
+}
 
 function getSessionStorageKey(tutoringContext?: TutoringContext) {
   return tutoringContext ? "scc-chat-session:tutoring" : "scc-chat-session:web_chat";
@@ -318,7 +321,8 @@ export function ChatPanel({
   onOpenTutoring?: () => void;
 }) {
   const { user, loading: authLoading } = useAuth();
-  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_GREETING]);
+  const initialGreeting = useMemo(() => buildInitialGreeting(tutoringContext), [tutoringContext]);
+  const [messages, setMessages] = useState<ChatMessage[]>([initialGreeting]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [failedInput, setFailedInput] = useState<string | null>(null);
@@ -379,17 +383,17 @@ export function ChatPanel({
       const hydratedMessages = json.data.map(mapStoredSessionMessage);
       if (!cancelled) {
         setSessionId(candidateSessionId);
-        setMessages(hydratedMessages.length > 0 ? hydratedMessages : [INITIAL_GREETING]);
+        setMessages(hydratedMessages.length > 0 ? hydratedMessages : [initialGreeting]);
       }
       return true;
     };
 
     const loadPersistedThread = async () => {
-      if (initialQuery) {
+      if (initialQuery && !initialSendRef.current) {
         localStorage.removeItem(sessionStorageKey);
         localStorage.removeItem("scc-chat-history");
         setSessionId(null);
-        setMessages([INITIAL_GREETING]);
+        setMessages([initialGreeting]);
         onSessionChange?.(null);
         return;
       }
@@ -410,7 +414,8 @@ export function ChatPanel({
         }
 
         try {
-          const channel = tutoringContext ? "tutoring" : "web_chat";
+          const channel =
+            sessionStorageKey === "scc-chat-session:tutoring" ? "tutoring" : "web_chat";
           const response = await fetch(
             `/api/assistant/sessions?channel=${channel}&status=active&limit=1`,
             { cache: "no-store" },
@@ -437,7 +442,7 @@ export function ChatPanel({
         const rawHistory = localStorage.getItem("scc-chat-history");
         if (!rawHistory) {
           if (!cancelled) {
-            setMessages([INITIAL_GREETING]);
+            setMessages([initialGreeting]);
           }
           return;
         }
@@ -448,7 +453,7 @@ export function ChatPanel({
         }
       } catch {
         if (!cancelled) {
-          setMessages([INITIAL_GREETING]);
+          setMessages([initialGreeting]);
         }
       }
     };
@@ -457,7 +462,7 @@ export function ChatPanel({
     return () => {
       cancelled = true;
     };
-  }, [authLoading, initialQuery, onSessionChange, preferredSessionId, sessionStorageKey, tutoringContext, user]);
+  }, [authLoading, initialGreeting, initialQuery, onSessionChange, preferredSessionId, sessionStorageKey, user]);
 
   // Persist chat history on every change (capped at 50 messages)
   useEffect(() => {
@@ -526,10 +531,20 @@ export function ChatPanel({
   useEffect(() => {
     if (initialQuery && !initialSendRef.current) {
       initialSendRef.current = true;
-      void sendMessage(initialQuery, [INITIAL_GREETING]);
+      void sendMessage(initialQuery, [initialGreeting]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialQuery]);
+  }, [initialGreeting, initialQuery]);
+
+  useEffect(() => {
+    setMessages((current) => {
+      if (current.some((message) => message.role === "user")) {
+        return current;
+      }
+
+      return [initialGreeting];
+    });
+  }, [initialGreeting]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -544,6 +559,18 @@ export function ChatPanel({
   }, []);
 
   // ── File attachment upload ────────────────────────────────────────────────
+
+  const readJsonResponse = useCallback(async (response: Response) => {
+    try {
+      return (await response.json()) as { data?: { id?: string }; error?: string };
+    } catch {
+      return {
+        error: response.ok
+          ? "The upload finished, but the server returned an unreadable response."
+          : "The upload failed before the server could return a usable error message.",
+      };
+    }
+  }, []);
 
   const handleFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -571,9 +598,9 @@ export function ChatPanel({
           method: "POST",
           body: formData,
         });
+        const json = await readJsonResponse(res);
 
         if (res.ok) {
-          const json = (await res.json()) as { data?: { id: string } };
           setAttachment((prev) =>
             prev ? { ...prev, status: "ready", id: json.data?.id, error: undefined } : null,
           );
@@ -586,7 +613,6 @@ export function ChatPanel({
             }
           }
         } else {
-          const json = (await res.json().catch(() => ({}))) as { error?: string };
           setAttachment((prev) =>
             prev
               ? {
@@ -609,7 +635,7 @@ export function ChatPanel({
         );
       }
     },
-    [onTutoringContextChange, sessionId, tutoringContext],
+    [onTutoringContextChange, readJsonResponse, sessionId, tutoringContext],
   );
 
   // ── TTS ───────────────────────────────────────────────────────────────────
@@ -1288,7 +1314,7 @@ export function ChatPanel({
   const handleClearChat = async () => {
     cancelListening();
     setLastTranscript(null);
-    setMessages([INITIAL_GREETING]);
+    setMessages([initialGreeting]);
     const currentSessionId = sessionId;
     setSessionId(null);
     onSessionChange?.(null);
@@ -1310,6 +1336,12 @@ export function ChatPanel({
       }
     }
   };
+
+  const starterPromptChips = tutoringContext
+    ? suggestedPrompts
+    : activeTasks.length === 0
+      ? ["Add my first task", "Set up my schedule", "What can you help with?"]
+      : ["What's due today?", "Update a task", "What should I work on tonight?"];
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden pt-4">
@@ -1389,12 +1421,7 @@ export function ChatPanel({
       {/* Context-aware suggestion chips — always visible above the input bar */}
       <div className="shrink-0 py-2">
         <div className="flex flex-wrap gap-2">
-          {(tutoringContext
-            ? suggestedPrompts
-            : activeTasks.length === 0
-              ? ["Add my first task", "Set up my schedule", "What can you help with?"]
-              : ["What's due today?", "Update a task", "What should I work on tonight?"]
-          ).map((chip) => (
+          {starterPromptChips.map((chip) => (
             <button
               key={chip}
               type="button"

@@ -15,6 +15,7 @@ import {
 import { buildProfilePrompt } from "./profile";
 import { formatRotationBadge, getClassRotationDays } from "./class-rotation";
 import { formatScheduleArchitectureLabel } from "./schedule-architecture";
+import { sanitizeTaskDueAtFromInput } from "./task-due-at";
 import type {
   AssistantAttachment,
   AssistantMessageContentType,
@@ -602,6 +603,40 @@ function extractAssistantAction(rawContent: string) {
   return { content, action };
 }
 
+function sanitizeAssistantActionDueAt(
+  message: string,
+  action?: AssistantAction,
+) {
+  if (!action) {
+    return action;
+  }
+
+  if (action.type === "add_task") {
+    return {
+      ...action,
+      task: {
+        ...action.task,
+        dueAt: sanitizeTaskDueAtFromInput(message, action.task.dueAt),
+      },
+    };
+  }
+
+  if (action.type === "update_task" && "dueAt" in action.updates) {
+    return {
+      ...action,
+      updates: {
+        ...action.updates,
+        dueAt:
+          action.updates.dueAt === null
+            ? null
+            : sanitizeTaskDueAtFromInput(message, action.updates.dueAt),
+      },
+    };
+  }
+
+  return action;
+}
+
 export async function generateAssistantReply(
   input: GenerateAssistantReplyInput,
 ): Promise<{ data: ChatMessage; action?: AssistantAction }> {
@@ -689,6 +724,7 @@ export async function generateAssistantReply(
 
   const rawContent = aiResponse.choices[0].message.content ?? "Sorry, I couldn't respond.";
   const { content, action } = extractAssistantAction(rawContent);
+  const sanitizedAction = sanitizeAssistantActionDueAt(input.message, action);
 
   return {
     data: {
@@ -697,6 +733,6 @@ export async function generateAssistantReply(
       content,
       createdAt: new Date().toISOString(),
     },
-    action,
+    action: sanitizedAction,
   };
 }

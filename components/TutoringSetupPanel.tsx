@@ -83,6 +83,18 @@ export function TutoringSetupPanel({
   const [attachments, setAttachments] = useState<SetupAttachment[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  const readJsonResponse = async (response: Response) => {
+    try {
+      return (await response.json()) as { data?: { id?: string }; error?: string };
+    } catch {
+      return {
+        error: response.ok
+          ? "The upload finished, but the server returned an unreadable response."
+          : "The upload failed before the server could return a usable error message.",
+      };
+    }
+  };
+
   const handleAttachmentUpload = async (files: FileList | null) => {
     if (!files?.length) return;
 
@@ -107,10 +119,7 @@ export function TutoringSetupPanel({
           method: "POST",
           body: formData,
         });
-        const json = (await response.json()) as {
-          data?: { id?: string };
-          error?: string;
-        };
+        const json = await readJsonResponse(response);
 
         if (!response.ok || !json.data?.id) {
           throw new Error(json.error ?? "Failed to upload tutoring attachment.");

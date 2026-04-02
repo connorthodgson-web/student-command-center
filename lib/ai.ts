@@ -18,6 +18,7 @@ import { formatApTemplateForPrompt, getApTemplate } from "./ap-course-templates"
 import { AI_CLASS_COLORS } from "./class-colors";
 import { deriveScheduleLabel, formatRotationBadge, getClassRotationDays, normalizeRotationDays } from "./class-rotation";
 import { normalizeScheduleArchitecture } from "./schedule-architecture";
+import { sanitizeTaskDueAtFromInput } from "./task-due-at";
 
 const client = new OpenAI(); // Reads OPENAI_API_KEY from environment automatically
 
@@ -153,7 +154,7 @@ Return only valid JSON.`;
     return {
       title: normalizeTaskTitle(parsed.title || input),
       classId,
-      dueAt: parsed.dueAt ?? undefined,
+      dueAt: sanitizeTaskDueAtFromInput(input, parsed.dueAt),
       type: parsed.type ?? undefined,
       reminderAt: parsed.reminderAt ?? undefined,
       description: parsed.notes ?? undefined,
